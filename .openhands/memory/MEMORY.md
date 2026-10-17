@@ -59,6 +59,10 @@ identifiers, env vars, log names or filenames. The conventions are
   `scripts/keep-alive.sh` polls the port and restarts the server automatically.
   It does not itself survive a container restart — relaunch it after a recycle.
   If the link 502s, `cat /proc/uptime` (small value = container restarted).
+- **To give her a real brain in the sandbox** (no Ollama/LM Studio): run
+  `llama-server` from llama.cpp in `/workspace/.llm` (NOT `/tmp` — a recycle wipes
+  it) on port 8080 with `--alias qwen3:8`, which matches the shipped config with no
+  admin edit. Recipe in `2026-10-16.md`.
 - Public URL: https://work-1-dsytpcehntqnlxzx.prod-runtime.all-hands.dev/ (port 12000)
   - **The preview maps only 12000/12001**, so the live demo must run on 12000 even
     though the repo default is 8060. Port 12001 (work-2) returns 502.
@@ -103,6 +107,14 @@ identifiers, env vars, log names or filenames. The conventions are
   manual rescan. Only cache facts; derive the rest on read.
 
 ## Design decisions and their reasons
+- **Personality cosmetics are a `@computed_field`.** `Personality.avatar` derives
+  the chat initials from `initials` (explicit, stripped/capped at 2) or the name
+  (one letter per word; two letters for a single word). A computed field is what
+  makes it ride along in every `model_dump()`, so no route needed changing. The
+  admin edits the raw `initials`; the client renders `avatar`.
+- **`tts.device=auto` actively probes for CUDA** rather than deferring to the
+  library: onnxruntime silently defaults to `CPUExecutionProvider`, so "auto" used
+  to mean "CPU even on a good GPU". Explicit `cuda` still falls back with a warning.
 - Model catalog `preferred: True` wins over raw score in `hardware.recommend()`.
   Needed because score alone picked Qwen2.5 7B/14B over the newer Qwen3 models
   (`_score` rewards parameters, not recency).
@@ -123,8 +135,15 @@ identifiers, env vars, log names or filenames. The conventions are
   so the OS does not raise its native keyboard over ours.
 
 ## Testing
-- Suites: `test_osk.py`, `test_recommend.py`, `test_admin_gpu.py`, `audit_pages.py`,
-  `mobile_measure.py`. All green, 0 console errors.
+- Suites: `test_osk.py`, `test_recommend.py`, `test_admin_gpu.py`,
+  `test_tts_device.py`, `audit_pages.py`, `mobile_measure.py`. All green, 0 console errors.
+- `test_tts_device.py` fakes `onnxruntime` via `sys.modules` to simulate a CUDA
+  build — the pattern to copy when testing GPU branches on a GPU-less box.
+- **Driving a chat turn from Playwright:** Enter in `#input` does submit and POSTs
+  `/api/chat/stream`. Wait on `#btn-send.disabled` true→false; a tool-calling turn
+  takes 30–90s on 4 CPU, so a 120s timeout is too short. `window.state` is not
+  global. Assert the avatar via `#messages .msg.assistant .avatar` (`.brand-mark`
+  is an SVG and raises "Node is not an HTMLElement").
 - Playwright browsers include firefox and webkit, not just chromium.
   `playwright install` alone fails on missing system libs — run
   `playwright install-deps firefox webkit` first (no root needed, uid 10001).
