@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sister RexenIOT · Admin</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='none' stroke='%23ff8fb1' stroke-width='2'/><circle cx='16' cy='16' r='5' fill='%23ff8fb1'/></svg>" />
+  <link rel="stylesheet" href="/css/style.css" />
+  <link rel="stylesheet" href="/css/admin.css" />
+</head>
+<body class="admin-body">
+
+<header class="admin-top">
+  <a class="admin-brand" href="/">
+    <svg viewBox="0 0 32 32" width="24" height="24" aria-hidden="true">
+      <circle cx="16" cy="16" r="13" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".5"/>
+      <circle cx="16" cy="16" r="5" fill="currentColor"/>
+    </svg>
+    <span>SISTER REXENIOT</span>
+  </a>
+  <span class="admin-sep">/</span>
+  <h1 class="admin-title">Control Room</h1>
+  <div class="admin-top-right">
+    <span class="pill" id="save-state"><i class="dot"></i><span>idle</span></span>
+    <button class="btn-ghost" id="btn-back">Back to RexenIOT</button>
+  </div>
+</header>
+
+<!-- token gate -->
+<div class="gate" id="gate" hidden>
+  <form class="gate-card" id="gate-form">
+    <h2>Admin token required</h2>
+    <p>Enter the token set in <code>ADMIN_TOKEN</code> or the config file.</p>
+    <input type="password" id="gate-token" placeholder="Admin token" autocomplete="current-password" />
+    <button class="btn-primary" type="submit">Unlock</button>
+    <p class="gate-error" id="gate-error" hidden></p>
+  </form>
+</div>
+
+<nav class="tabs" id="tabs">
+  <button class="tab active" data-tab="hardware">Hardware &amp; Models</button>
+  <button class="tab" data-tab="personalities">Personalities</button>
+  <button class="tab" data-tab="brain">Model Backend</button>
+  <button class="tab" data-tab="voice">Voice</button>
+  <button class="tab" data-tab="integrations">Home &amp; Tools</button>
+  <button class="tab" data-tab="skills">Skills</button>
+  <button class="tab" data-tab="server">Server</button>
+</nav>
+
+<main class="admin-main">
+
+  <!-- ============================ HARDWARE ============================== -->
+  <section class="panel active" data-panel="hardware">
+    <div class="panel-head">
+      <div>
+        <h2>Hardware &amp; Models</h2>
+        <p class="muted">Scan the machine RexenIOT runs on. The scan recommends the strongest
+           speech and language models this hardware can actually carry, and can apply them
+           in one click.</p>
+      </div>
+      <div class="panel-actions">
+        <button class="btn-primary" id="btn-scan">Scan this machine</button>
+        <button class="btn-ghost" id="btn-apply-recs" disabled>Apply recommendations</button>
+      </div>
+    </div>
+
+    <div class="card" id="hw-summary-card" hidden>
+      <h3>Detected hardware</h3>
+      <div class="hw-grid" id="hw-grid"></div>
+      <p class="hw-summary" id="hw-summary"></p>
+    </div>
+
+    <div class="card" id="hw-notes-card" hidden>
+      <h3>Assessment</h3>
+      <div id="hw-notes"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h3>Model catalog</h3>
+        <div class="seg" id="model-filter">
+          <button class="seg-btn active" data-kind="all">All</button>
+          <button class="seg-btn" data-kind="tts">Speech</button>
+          <button class="seg-btn" data-kind="llm">Language</button>
+          <button class="seg-btn" data-kind="stt">Dictation</button>
+        </div>
+      </div>
+      <div id="model-list" class="model-list">
+        <p class="muted">Run a scan to see what your hardware can run.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Speech engine</h3>
+      <div class="kv" id="tts-status"></div>
+      <div class="row-actions">
+        <button class="btn-ghost" id="btn-tts-warm">Load / reload engine</button>
+        <button class="btn-ghost" id="btn-tts-clear">Clear speech cache</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>GPU acceleration</h3>
+      <p class="muted">Whether the installed speech runtime can actually reach the GPU.
+         A GPU in the machine is not the same as a GPU the engine can use.</p>
+      <div class="kv" id="accelerator-status"></div>
+      <div id="accelerator-hints"></div>
+      <div class="row-actions">
+        <button class="btn-ghost" id="btn-tts-reload">Reload engine</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Storage &amp; portability</h3>
+      <p class="muted">Where RexenIOT keeps her state, and how much room it takes. A portable
+         copy keeps everything here, so the whole folder can be moved to another machine.</p>
+      <div class="kv" id="storage-status"></div>
+    </div>
+  </section>
+
+  <!-- ========================= PERSONALITIES =========================== -->
+  <section class="panel" data-panel="personalities">
+    <div class="panel-head">
+      <div>
+        <h2>Personalities</h2>
+        <p class="muted">Each personality is a selectable character: a system prompt, a voice,
+           delivery settings and an accent colour. Users pick between the enabled ones.</p>
+      </div>
+      <div class="panel-actions">
+        <button class="btn-ghost" id="btn-restore-builtins">Restore built-ins</button>
+        <button class="btn-primary" id="btn-new-persona">New personality</button>
+      </div>
+    </div>
+
+    <div class="persona-layout">
+      <ul class="persona-index" id="persona-index"></ul>
+
+      <form class="persona-editor" id="persona-form">
+        <div class="editor-head">
+          <h3 id="editor-title">Select a personality</h3>
+          <span class="badge" id="editor-badge" hidden>built-in</span>
+        </div>
+
+        <div class="field-grid">
+          <label>Name
+            <input name="name" required maxlength="40" />
+          </label>
+          <label>Tagline
+            <input name="tagline" maxlength="60" />
+          </label>
+          <label class="span-2">Description
+            <input name="description" maxlength="200" />
+          </label>
+          <label class="span-2">Greeting (spoken on startup)
+            <input name="greeting" maxlength="200" />
+          </label>
+          <label class="span-2">Behaviour traits — this is the personality prompt
+            <textarea name="traits" rows="6" placeholder="Your manner: composed, understated…"></textarea>
+          </label>
+
+          <label>Voice
+            <select name="voice" id="voice-select"></select>
+          </label>
+          <label>Speaking rate
+            <input name="speed" type="number" min="0.5" max="2" step="0.01" />
+          </label>
+          <label>Emotion tag
+            <select name="emotion" id="emotion-select"></select>
+          </label>
+          <label>Decoding preset
+            <select name="preset">
+              <option value="stable">stable</option>
+              <option value="expressive">expressive</option>
+            </select>
+          </label>
+          <label>Accent colour
+            <input name="accent" type="color" />
+          </label>
+          <label>Icon key
+            <input name="icon" maxlength="20" />
+          </label>
+          <label>Chat initials
+            <input name="initials" maxlength="2" placeholder="auto" />
+          </label>
+          <label class="checkbox span-2">
+            <input type="checkbox" name="enabled" /> Offered to users
+          </label>
+        </div>
+
+        <div class="editor-actions">
+          <button class="btn-ghost" type="button" id="btn-preview-persona">Preview voice</button>
+          <button class="btn-ghost" type="button" id="btn-duplicate-persona" disabled>Duplicate</button>
+          <button class="btn-danger" type="button" id="btn-delete-persona" disabled>Delete</button>
+          <span class="spacer"></span>
+          <button class="btn-primary" type="submit" id="btn-save-persona" disabled>Save</button>
+        </div>
+        <div class="preview-result" id="preview-result"></div>
+      </form>
+    </div>
+  </section>
+
+  <!-- ============================= BRAIN =============================== -->
+  <section class="panel" data-panel="brain">
+    <div class="panel-head">
+      <div>
+        <h2>Model backend</h2>
+        <p class="muted">Where Sister RexenIOT thinks. Any OpenAI-compatible endpoint works — Ollama,
+           LM Studio, llama.cpp, vLLM, or a hosted API. Leave blank to run in offline mode.</p>
+      </div>
+      <div class="panel-actions">
+        <button class="btn-ghost" id="btn-llm-test">Test connection</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="quick-picks" id="llm-quickpicks">
+        <button class="chip" data-provider="ollama" data-url="http://localhost:11434">Ollama (local)</button>
+        <button class="chip" data-provider="openai" data-url="http://localhost:1234/v1">LM Studio (local)</button>
+        <button class="chip" data-provider="openai" data-url="http://localhost:8080/v1">llama.cpp server</button>
+        <button class="chip" data-provider="openai" data-url="http://localhost:8000/v1">vLLM (local)</button>
+      </div>
+
+      <h3>Connection</h3>
+      <div class="field-grid">
+        <label>Provider
+          <select name="llm.provider" data-cfg="llm.provider">
+            <option value="auto">auto-detect</option>
+            <option value="ollama">ollama</option>
+            <option value="openai">openai-compatible</option>
+            <option value="anthropic">anthropic</option>
+            <option value="offline">offline (no model)</option>
+          </select>
+        </label>
+        <label>Base URL
+          <input name="llm.base_url" data-cfg="llm.base_url" placeholder="http://localhost:11434" />
+        </label>
+        <label>API key <span class="muted">(env var preferred)</span>
+          <input name="llm.api_key" data-cfg="llm.api_key" type="password" placeholder="***" />
+        </label>
+        <label>Model
+          <input name="llm.model" data-cfg="llm.model" list="llm-models" placeholder="qwen2.5:7b" />
+          <datalist id="llm-models"></datalist>
+        </label>
+      </div>
+      <div class="row-actions">
+        <button class="btn-ghost" id="btn-llm-list">List available models</button>
+        <span class="muted" id="llm-test-result"></span>
+      </div>
+
+      <h3>Behaviour</h3>
+      <div class="field-grid">
+        <label>Temperature
+          <input name="llm.temperature" data-cfg="llm.temperature" type="number" min="0" max="2" step="0.05" />
+        </label>
+        <label>Max tokens
+          <input name="llm.max_tokens" data-cfg="llm.max_tokens" type="number" min="64" max="8000" step="32" />
+        </label>
+        <label>History turns kept
+          <input name="llm.history_turns" data-cfg="llm.history_turns" type="number" min="0" max="60" />
+        </label>
+        <label>Request timeout (s)
+          <input name="llm.timeout_s" data-cfg="llm.timeout_s" type="number" min="5" max="600" />
+        </label>
+        <label class="span-2">Extra system instruction
+          <textarea name="llm.system_prompt_extra" data-cfg="llm.system_prompt_extra" rows="3"
+            placeholder="Appended to every personality prompt."></textarea>
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Task routing</h3>
+      <p class="muted">RexenIOT picks a backend per task: conversation and tool calls go to the
+         chat endpoint above, while image or 3D work is delegated to ComfyUI. Set the ComfyUI
+         address to enable generation tools.</p>
+      <div class="field-grid">
+        <label>ComfyUI base URL
+          <input name="tools.comfyui_url" data-cfg="tools.comfyui_url" placeholder="http://localhost:8188" />
+        </label>
+        <label>ComfyUI default workflow
+          <input name="tools.comfyui_workflow" data-cfg="tools.comfyui_workflow" placeholder="rexeniot_default" />
+        </label>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================= VOICE =============================== -->
+  <section class="panel" data-panel="voice">
+    <div class="panel-head">
+      <div>
+        <h2>Voice</h2>
+        <p class="muted">Speech output runs through KittenTTS. Pick the engine tier and the
+           default voice, then preview it.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Engine</h3>
+      <div class="field-grid">
+        <label>Model tier
+          <select name="tts.model_id" data-cfg="tts.model_id" id="tts-model-select"></select>
+        </label>
+        <label>Default voice
+          <select name="tts.voice" data-cfg="tts.voice" id="tts-voice-select"></select>
+        </label>
+        <label>Speaking rate
+          <input name="tts.speed" data-cfg="tts.speed" type="number" min="0.5" max="2" step="0.01" />
+        </label>
+        <label>Default emotion tag
+          <select name="tts.default_emotion" data-cfg="tts.default_emotion" id="tts-emotion-select"></select>
+        </label>
+        <label>Decoding preset
+          <select name="tts.preset" data-cfg="tts.preset">
+            <option value="stable">stable</option>
+            <option value="expressive">expressive</option>
+          </select>
+        </label>
+        <label>Max characters per reply
+          <input name="tts.max_chars" data-cfg="tts.max_chars" type="number" min="100" max="5000" step="50" />
+        </label>
+        <label>Compute device
+          <select name="tts.device" data-cfg="tts.device" id="tts-device-select">
+            <option value="auto">auto (use the GPU when the runtime can)</option>
+            <option value="cuda">cuda (force GPU)</option>
+            <option value="cpu">cpu (force CPU)</option>
+          </select>
+        </label>
+        <label class="checkbox"><input type="checkbox" name="tts.enabled" data-cfg="tts.enabled" /> Speech output enabled</label>
+        <label class="checkbox"><input type="checkbox" name="tts.cache_enabled" data-cfg="tts.cache_enabled" /> Cache generated audio</label>
+      </div>
+      <div class="row-actions">
+        <button class="btn-ghost" id="btn-voice-preview">Preview greeting</button>
+        <span class="muted" id="voice-preview-result"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Speech input</h3>
+      <p class="muted">Dictation uses the browser's speech recognition, so audio never leaves
+         the machine running the browser.</p>
+      <div class="field-grid">
+        <label>Language
+          <input name="voice_input.language" data-cfg="voice_input.language" placeholder="en-US" />
+        </label>
+        <label class="checkbox"><input type="checkbox" name="voice_input.enabled" data-cfg="voice_input.enabled" /> Allow microphone input</label>
+        <label class="checkbox"><input type="checkbox" name="voice_input.auto_send" data-cfg="voice_input.auto_send" /> Send automatically when speech ends</label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Wake mode</h3>
+      <p class="muted">Keeps the microphone listening for a wake word. Once heard, every
+         utterance is treated as addressed to her until a sleep word is spoken or the
+         session goes quiet. Her own replies are never mistaken for speech, because
+         listening pauses while she talks.</p>
+      <div class="field-grid">
+        <label class="checkbox span-2"><input type="checkbox" name="voice_input.wake_enabled" data-cfg="voice_input.wake_enabled" /> Enable wake mode (adds the always-listening button to the HUD)</label>
+        <label class="span-2">Wake words (comma separated)
+          <input name="voice_input.wake_words-list" data-cfg="voice_input.wake_words-list" placeholder="hey rexeniot, okay rexeniot" />
+        </label>
+        <label class="span-2">Sleep words (comma separated)
+          <input name="voice_input.sleep_words-list" data-cfg="voice_input.sleep_words-list" placeholder="stop listening, go to sleep" />
+        </label>
+        <label>End the session after (seconds of silence)
+          <input type="number" min="5" max="900" name="voice_input.session_idle_s" data-cfg="voice_input.session_idle_s" />
+        </label>
+        <label class="checkbox"><input type="checkbox" name="voice_input.acknowledge" data-cfg="voice_input.acknowledge" /> Speak a short acknowledgement when woken</label>
+        <label class="span-2">Acknowledgement
+          <input name="voice_input.acknowledgement" data-cfg="voice_input.acknowledgement" placeholder="I'm here." />
+        </label>
+      </div>
+      <p class="muted">Wake words are matched loosely, so "hey rexeniot" is heard even when the
+         recogniser splits or runs the words together. Browser speech recognition needs
+         network access; the audio is handled by the browser, not by this server.</p>
+    </div>
+  </section>
+
+  <!-- ========================= INTEGRATIONS ============================ -->
+  <section class="panel" data-panel="integrations">
+    <div class="panel-head">
+      <div>
+        <h2>Home &amp; tools</h2>
+        <p class="muted">What Sister RexenIOT is allowed to touch. Each integration is independent, so
+           a missing one disables only its own tools.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Home Assistant</h3>
+      <div class="field-grid">
+        <label>Base URL
+          <input name="tools.home_assistant_url" data-cfg="tools.home_assistant_url" placeholder="http://homeassistant.local:8123" />
+        </label>
+        <label>Long-lived token
+          <input name="tools.home_assistant_token" data-cfg="tools.home_assistant_token" type="password" placeholder="***" />
+        </label>
+      </div>
+      <div class="row-actions">
+        <button class="btn-ghost" data-test="home_assistant">Test connection</button>
+        <span class="muted" data-test-result="home_assistant"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>MQTT broker</h3>
+      <div class="field-grid">
+        <label>Host
+          <input name="tools.mqtt_host" data-cfg="tools.mqtt_host" placeholder="localhost" />
+        </label>
+        <label>Port
+          <input name="tools.mqtt_port" data-cfg="tools.mqtt_port" type="number" min="1" max="65535" />
+        </label>
+        <label>Username
+          <input name="tools.mqtt_username" data-cfg="tools.mqtt_username" />
+        </label>
+        <label>Password
+          <input name="tools.mqtt_password" data-cfg="tools.mqtt_password" type="password" placeholder="***" />
+        </label>
+      </div>
+      <div class="row-actions">
+        <button class="btn-ghost" data-test="mqtt">Publish test message</button>
+        <span class="muted" data-test-result="mqtt"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Computer control</h3>
+      <div class="field-grid">
+        <label class="checkbox span-2">
+          <input type="checkbox" name="tools.allow_shell" data-cfg="tools.allow_shell" />
+          Allow the agent to run shell commands on this computer
+        </label>
+        <label class="span-2">Shell allowlist <span class="muted">(comma separated first words)</span>
+          <input name="tools.shell_allowlist" data-cfg="tools.shell_allowlist-list" placeholder="echo, dir, ls" />
+        </label>
+        <label class="span-2">Web allowlist <span class="muted">(domains the agent may fetch)</span>
+          <input name="tools.web_allowlist" data-cfg="tools.web_allowlist-list" placeholder="api.example.com, weather.gov" />
+        </label>
+      </div>
+      <p class="warn-note">Enabling shell access lets the agent run real commands. Keep the
+         allowlist narrow.</p>
+    </div>
+
+    <div class="card">
+      <h3>Alexa</h3>
+      <p class="muted">
+        Amazon publishes no API for commanding an Echo or making Alexa speak, so Sister RexenIOT
+        drives a bridge instead. Pick one and fill in its settings; the Alexa skill stays off
+        until a provider is set.
+      </p>
+      <div class="field-grid">
+        <label class="span-2">Provider
+          <select name="tools.alexa_provider" data-cfg="tools.alexa_provider">
+            <option value="">— not configured —</option>
+            <option value="voicemonkey">Voice Monkey (HTTP: announce + routines)</option>
+            <option value="alexacli">alexacli (local CLI: commands, ask, routines)</option>
+            <option value="home_assistant">Home Assistant (announce only)</option>
+          </select>
+        </label>
+
+        <label>Voice Monkey token
+          <input name="tools.voicemonkey_token" data-cfg="tools.voicemonkey_token" type="password" placeholder="***" />
+        </label>
+        <label>Voice Monkey device id
+          <input name="tools.voicemonkey_device" data-cfg="tools.voicemonkey_device" placeholder="from the Voice Monkey console" />
+        </label>
+        <label>Announce-to-all device id <span class="muted">(optional)</span>
+          <input name="tools.voicemonkey_announce_device" data-cfg="tools.voicemonkey_announce_device" />
+        </label>
+        <label>alexacli path <span class="muted">(blank = find on PATH)</span>
+          <input name="tools.alexacli_path" data-cfg="tools.alexacli_path" placeholder="alexacli" />
+        </label>
+        <label>alexacli default device <span class="muted">(required: alexacli needs a device for speak/command/ask)</span>
+          <input name="tools.alexacli_device" data-cfg="tools.alexacli_device" placeholder="Kitchen" />
+        </label>
+        <label class="span-2">Home Assistant Alexa entity
+          <input name="tools.alexa_ha_entity" data-cfg="tools.alexa_ha_entity" placeholder="media_player.living_room_echo" />
+        </label>
+      </div>
+      <div class="row-actions">
+        <button class="btn-ghost" data-test="alexa">List devices</button>
+        <span class="muted" data-test-result="alexa"></span>
+      </div>
+      <p class="warn-note">Voice Monkey and alexacli both use unofficial Amazon interfaces and can
+         break when Amazon changes them. alexacli needs its refresh token re-seeded about every
+         two weeks. Home Assistant's Alexa Media Player is the steadiest of the three.</p>
+    </div>
+
+    <div class="card">
+      <h3>Registered tools</h3>
+      <ul class="tool-list" id="tool-registry"></ul>
+    </div>
+  </section>
+
+  <!-- ============================== SKILLS ============================= -->
+  <section class="panel" data-panel="skills">
+    <div class="panel-head">
+      <div>
+        <h2>Skills</h2>
+        <p class="muted">Bundles of capability you can switch on and off. A skill carries the
+           instructions Sister RexenIOT follows and owns the tools that go with it, so turning one
+           off removes both. Skills whose integration is not set up stay dormant.</p>
+      </div>
+      <button class="btn-ghost" id="btn-restore-skills">Restore built-ins</button>
+    </div>
+
+    <div class="card">
+      <ul class="skill-list" id="skill-list"></ul>
+    </div>
+
+    <div class="card">
+      <h3>Add a skill</h3>
+      <div class="field-grid">
+        <label>Name <input id="skill-new-name" placeholder="Workshop" /></label>
+        <label>Tagline <input id="skill-new-tagline" placeholder="Tools in the garage" /></label>
+        <label class="span-2">Instructions <span class="muted">(added to her prompt while enabled)</span>
+          <input id="skill-new-instructions" placeholder="Skill: Workshop. You can..." />
+        </label>
+        <label class="span-2">Tools <span class="muted">(comma separated tool names)</span>
+          <input id="skill-new-tools" placeholder="system_status, list_processes" />
+        </label>
+      </div>
+      <div class="row-actions">
+        <button class="btn-ghost" id="btn-add-skill">Add skill</button>
+        <span class="muted" id="skill-add-result"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ SERVER =============================== -->
+  <section class="panel" data-panel="server">
+    <div class="panel-head">
+      <div>
+        <h2>Server</h2>
+        <p class="muted">Binding, admin access and housekeeping.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Network</h3>
+      <div class="field-grid">
+        <label>Host
+          <input name="server.host" data-cfg="server.host" />
+        </label>
+        <label>Port
+          <input name="server.port" data-cfg="server.port" type="number" min="1" max="65535" />
+        </label>
+        <label class="checkbox"><input type="checkbox" name="server.open_browser" data-cfg="server.open_browser" /> Open the browser on start</label>
+        <label class="checkbox"><input type="checkbox" name="tools.enabled" data-cfg="tools.enabled" /> Enable tools (agent can act)</label>
+      </div>
+      <p class="muted">Binding to <code>0.0.0.0</code> exposes RexenIOT to your local network.
+         Host and port changes take effect on the next start.</p>
+    </div>
+
+    <div class="card">
+      <h3>Admin access</h3>
+      <div class="field-grid">
+        <label class="span-2">Admin token <span class="muted">(blank means no token is required)</span>
+          <input name="admin_token" data-cfg="admin_token" type="password" placeholder="***" />
+        </label>
+      </div>
+      <p class="muted">The token is checked on every write. Set it via the <code>ADMIN_TOKEN</code>
+         environment variable to keep it out of the config file.</p>
+    </div>
+
+    <div class="card">
+      <h3>Storage</h3>
+      <div class="kv" id="storage-stats"></div>
+    </div>
+
+    <div class="card">
+      <h3>Log</h3>
+      <pre class="log" id="log-view"></pre>
+      <div class="row-actions"><button class="btn-ghost" id="btn-refresh-log">Refresh log</button></div>
+    </div>
+
+    <div class="card">
+      <h3>Source download</h3>
+      <p class="muted">The application source as a zip, without downloaded models or local
+         settings. Documentation is included: <code>SETUP.md</code> is the step-by-step
+         guide for a new user and <code>README.md</code> is the technical reference.
+         Extract it anywhere and run <code>start.cmd</code> (Windows) or
+         <code>./start.sh</code> (Linux / macOS) to install a fresh copy.</p>
+      <div class="row-actions">
+        <a class="btn-primary" href="/download/SisterRexenIOT.zip" download>Download SisterRexenIOT.zip</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script src="/js/admin.js" type="module"></script>
+</body>
+</html>

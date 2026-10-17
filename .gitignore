@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+data/config.json
+data/personalities.json
+data/skills.json
+data/hardware_profile.json
+data/agent_memory.json
+data/rexeniot.log
+data/cache/
+data/models/
+data/voices/
+data/uploads/
+data/chat_history.jsonl
+.req-hash
+*.wav

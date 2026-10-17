@@ -1,0 +1,1179 @@
+/* ============================================================================
+   Sister RexenIOT HUD
+   Dark, instrument-like, with an accent that follows the active personality.
+   ========================================================================== */
+
+:root {
+  --accent: #ff8fb1;
+  --accent-soft: color-mix(in oklab, var(--accent) 35%, transparent);
+  --bg: #05080d;
+  --bg-1: #0a0f17;
+  --bg-2: #111827;
+  --bg-3: #1a2231;
+  --line: #1e2836;
+  --line-2: #2a374a;
+  --fg: #e8eef7;
+  --fg-dim: #9aa9be;
+  --fg-faint: #5f6f85;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --err: #f87171;
+  --radius: 14px;
+  --radius-sm: 9px;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --shadow: 0 18px 60px rgba(0, 0, 0, .55);
+  --ease: cubic-bezier(.16, 1, .3, 1);
+}
+
+* { box-sizing: border-box; }
+
+/* An explicit display value in a class rule beats the hidden attribute, which
+   silently undoes `el.hidden = true` for any element styled display:flex/grid.
+   Stating it here keeps the attribute authoritative everywhere. */
+[hidden] { display: none !important; }
+
+html, body {
+  height: 100%;
+  /* Mobile browsers shrink the visual viewport when their chrome (URL bar) is
+     showing. dvh tracks the *visible* height, so the composer stays on screen
+     instead of being pushed under it. */
+  height: 100dvh;
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+body::before {
+  /* Ambient wash that picks up the persona accent. */
+  content: "";
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(1100px 620px at 78% -10%, color-mix(in oklab, var(--accent) 13%, transparent), transparent 62%),
+    radial-gradient(820px 520px at 8% 108%, color-mix(in oklab, var(--accent) 8%, transparent), transparent 60%);
+  pointer-events: none;
+  transition: background 900ms var(--ease);
+  z-index: 0;
+}
+
+button { font: inherit; color: inherit; cursor: pointer; }
+
+/* ------------------------------------------------------------------ boot --- */
+
+.boot {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  z-index: 100;
+  transition: opacity .6s var(--ease), visibility .6s;
+}
+.boot.done { opacity: 0; visibility: hidden; }
+
+.boot-inner { text-align: center; }
+.boot-ring { position: relative; width: 96px; height: 96px; margin: 0 auto 26px; }
+.boot-ring span {
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  opacity: .25;
+  animation: boot-spin 2.4s linear infinite;
+}
+.boot-ring span:nth-child(1) { border-right-color: transparent; animation-duration: 1.6s; }
+.boot-ring span:nth-child(2) { inset: 12px; border-left-color: transparent; animation-duration: 2.2s; animation-direction: reverse; }
+.boot-ring span:nth-child(3) { inset: 24px; border-bottom-color: transparent; animation-duration: 2.8s; }
+
+@keyframes boot-spin { to { transform: rotate(360deg); } }
+
+.boot-title {
+  font-family: var(--mono);
+  /* The wordmark is now written as words rather than one letter per glyph, so the
+     wide tracking that spaced it out is unnecessary -- it only stretched the line. */
+  letter-spacing: .06em;
+  font-size: 26px;
+  font-weight: 500;
+  margin: 0 0 10px;
+  color: var(--fg);
+}
+.boot-status { color: var(--fg-dim); font-size: 13px; margin: 0; font-family: var(--mono); }
+
+/* ----------------------------------------------------------------- shell --- */
+
+.app {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  /* Leave room for the on-screen keyboard and the home indicator. */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ---------------------------------------------------------------- topbar --- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in oklab, var(--bg-1) 82%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+.brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.brand-mark { width: 30px; height: 30px; color: var(--accent); flex: none; }
+.brand-core { animation: pulse-core 2.6s ease-in-out infinite; transform-origin: 16px 16px; }
+@keyframes pulse-core { 50% { opacity: .45; } }
+.brand-text { display: flex; flex-direction: column; line-height: 1.15; }
+/* The wordmark is mixed case now, so it needs less tracking than the all-caps
+   version and its width is stable -- which also keeps the header to one row. */
+.brand-name { font-family: var(--mono); letter-spacing: .06em; font-size: 13px; }
+.brand-sub { font-size: 10px; color: var(--fg-faint); letter-spacing: .06em; text-transform: uppercase; }
+
+.persona-picker { position: relative; margin-left: 8px; }
+.persona-current {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  transition: border-color .2s, background .2s;
+}
+.persona-current:hover { border-color: var(--accent-soft); background: var(--bg-3); }
+.persona-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+  flex: none;
+}
+.persona-meta { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.2; }
+.persona-name { font-size: 13px; font-weight: 600; }
+.persona-tag { font-size: 10.5px; color: var(--fg-faint); }
+.chev { width: 15px; height: 15px; color: var(--fg-faint); }
+
+.persona-list {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  /* Cap to the space actually available to the right of the picker. A fixed
+     320px min-width ran off the right edge on phones (the picker starts at
+     x=160 on a 320px screen, so the panel reached 480px) and the surplus was
+     clipped by the app shell, leaving the rows unreachable. */
+  width: min(320px, calc(100vw - 24px));
+  min-width: 0;
+  max-width: calc(100vw - 24px);
+  max-height: min(62vh, 460px);
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  z-index: 30;
+  animation: pop .18s var(--ease);
+}
+@keyframes pop { from { opacity: 0; transform: translateY(-6px); } }
+
+.persona-list li {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  padding: 10px 11px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background .15s;
+}
+.persona-list li:hover { background: var(--bg-3); }
+.persona-list li[aria-selected="true"] { background: color-mix(in oklab, var(--accent) 12%, var(--bg-2)); }
+.persona-list .pl-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex: none; }
+.persona-list .pl-body { min-width: 0; }
+.persona-list .pl-name { font-size: 13px; font-weight: 600; }
+.persona-list .pl-desc { font-size: 11.5px; color: var(--fg-dim); margin-top: 2px; }
+
+.top-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .04em;
+  color: var(--fg-dim);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  white-space: nowrap;
+  max-width: 190px;
+  overflow: hidden;
+}
+.pill span { overflow: hidden; text-overflow: ellipsis; }
+.pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--fg-faint); flex: none; }
+.pill.ok .dot { background: var(--ok); box-shadow: 0 0 7px var(--ok); }
+.pill.warn .dot { background: var(--warn); box-shadow: 0 0 7px var(--warn); }
+.pill.err .dot { background: var(--err); box-shadow: 0 0 7px var(--err); }
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 34px; height: 34px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  transition: color .18s, border-color .18s, background .18s;
+}
+.icon-btn svg { width: 17px; height: 17px; }
+.icon-btn:hover { color: var(--fg); border-color: var(--line-2); background: var(--bg-3); }
+.icon-btn[aria-pressed="true"] { color: var(--accent); border-color: var(--accent-soft); }
+#btn-mute[aria-pressed="true"] .wave { display: none; }
+
+/* ----------------------------------------------------------------- stage --- */
+
+.stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.conversation { position: relative; min-height: 0; display: flex; flex-direction: column; }
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 26px 30px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  scroll-behavior: smooth;
+}
+
+.msg { display: flex; gap: 13px; max-width: 84ch; animation: rise .32s var(--ease); }
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+
+.msg .avatar {
+  width: 30px; height: 30px;
+  border-radius: 9px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+}
+.msg.user { flex-direction: row-reverse; margin-left: auto; }
+.msg.user .avatar { background: var(--bg-3); color: var(--fg-dim); }
+.msg.assistant .avatar { color: var(--accent); border-color: var(--accent-soft); background: color-mix(in oklab, var(--accent) 10%, var(--bg-2)); }
+
+.bubble {
+  padding: 13px 16px;
+  border-radius: var(--radius);
+  font-size: 14.5px;
+  line-height: 1.62;
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+  overflow-wrap: anywhere;
+}
+.msg.user .bubble { background: var(--bg-2); }
+.msg.assistant .bubble { border-color: var(--line-2); }
+.bubble :is(p) { margin: 0 0 .6em; }
+.bubble :is(p):last-child { margin-bottom: 0; }
+.bubble code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  background: var(--bg-3);
+  padding: 1.5px 5px;
+  border-radius: 5px;
+}
+.bubble pre {
+  margin: .6em 0;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+}
+.bubble pre code { background: none; padding: 0; }
+
+.msg-meta {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 7px;
+  font-size: 10.5px;
+  color: var(--fg-faint);
+  font-family: var(--mono);
+}
+
+.speak-btn {
+  background: none;
+  border: none;
+  padding: 2px;
+  color: var(--fg-faint);
+  display: grid;
+  place-items: center;
+  /* The icon stays 13px, but a 17px hit area is hard to tap on a phone. The
+     pseudo-element grows the touch target without moving anything. */
+  position: relative;
+}
+.speak-btn::after { content: ""; position: absolute; inset: -11px; }
+.speak-btn:hover { color: var(--accent); }
+.speak-btn svg { width: 13px; height: 13px; }
+
+.cursor::after {
+  content: "▋";
+  color: var(--accent);
+  animation: blink 1s step-end infinite;
+  margin-left: 1px;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+.typing { display: inline-flex; gap: 4px; padding: 4px 2px; }
+.typing i {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--fg-faint);
+  animation: bounce 1.2s infinite;
+}
+.typing i:nth-child(2) { animation-delay: .16s; }
+.typing i:nth-child(3) { animation-delay: .32s; }
+@keyframes bounce { 0%, 60%, 100% { transform: translateY(0); opacity: .4; } 30% { transform: translateY(-5px); opacity: 1; } }
+
+/* tool tray */
+.tool-tray {
+  border-top: 1px solid var(--line);
+  background: var(--bg-1);
+  padding: 9px 30px 11px;
+  max-height: 132px;
+  overflow-y: auto;
+}
+.tool-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+.tool-tray ul { list-style: none; margin: 7px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 7px; }
+.tool-tray li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  background: var(--bg-2);
+  color: var(--fg-dim);
+}
+.tool-tray li.ok { border-color: color-mix(in oklab, var(--ok) 40%, var(--line-2)); }
+.tool-tray li.bad { border-color: color-mix(in oklab, var(--err) 45%, var(--line-2)); color: var(--err); }
+
+/* ------------------------------------------------------------------ rail --- */
+
+.rail {
+  border-left: 1px solid var(--line);
+  background: color-mix(in oklab, var(--bg-1) 70%, transparent);
+  padding: 20px 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.reactor { position: relative; display: grid; place-items: center; }
+.reactor svg { width: 100%; max-width: 190px; height: auto; }
+
+.ring { fill: none; stroke: var(--accent); stroke-width: 1; opacity: .2; transform-origin: 100px 100px; }
+.ring-1 { stroke-dasharray: 3 7; animation: rot 26s linear infinite; }
+.ring-2 { stroke-dasharray: 22 12; opacity: .3; animation: rot 18s linear infinite reverse; }
+.ring-3 { stroke-dasharray: 1 5; opacity: .45; animation: rot 11s linear infinite; }
+@keyframes rot { to { transform: rotate(360deg); } }
+
+.tick-marks line { stroke: var(--accent); stroke-width: 1.5; opacity: .35; }
+.core { fill: var(--accent); transition: r .25s var(--ease); }
+.core-glow { opacity: .5; transition: opacity .3s; }
+
+.reactor[data-state="listening"] .ring-1 { animation-duration: 7s; opacity: .5; }
+.reactor[data-state="listening"] .core { r: 22px; }
+.reactor[data-state="thinking"] .ring-2 { animation-duration: 3.4s; }
+.reactor[data-state="thinking"] .core-glow { opacity: .85; }
+.reactor[data-state="speaking"] .ring-3 { animation-duration: 4s; opacity: .7; }
+.reactor[data-state="speaking"] .core { r: 20px; }
+
+.viz { width: 100%; height: 58px; margin-top: 4px; }
+.reactor-state {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .3em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  margin-top: 8px;
+}
+.reactor[data-state="listening"] .reactor-state { color: var(--accent); }
+.reactor[data-state="speaking"] .reactor-state { color: var(--accent); }
+
+.rail-block h3 {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  margin: 0 0 11px;
+  font-weight: 500;
+}
+
+.stats { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.stats > div { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }
+.stats dt { color: var(--fg-faint); }
+.stats dd { margin: 0; text-align: right; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 62%; }
+
+.reminders { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.reminders li {
+  font-size: 11.5px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+}
+
+/* -------------------------------------------------------------- composer --- */
+
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 13px;
+  padding: 16px 22px 20px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in oklab, var(--bg-1) 84%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+.mic {
+  position: relative;
+  width: 52px; height: 52px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  color: var(--fg-dim);
+  transition: color .2s, border-color .2s, background .2s, transform .1s;
+}
+.mic svg { width: 23px; height: 23px; }
+.mic:hover { color: var(--fg); }
+.mic:active { transform: scale(.95); }
+.mic[aria-pressed="true"] {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 6px var(--accent-soft);
+}
+.mic-halo {
+  position: absolute; inset: -6px;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  opacity: 0;
+}
+.mic[aria-pressed="true"] .mic-halo { animation: halo 1.5s ease-out infinite; }
+
+/* Wake button: arms always-listening mode. */
+.wake {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  color: var(--fg-dim);
+  display: grid;
+  place-items: center;
+  flex: none;
+  transition: color .18s, border-color .18s, background .18s, transform .12s;
+}
+.wake svg { width: 22px; height: 22px; }
+.wake:hover { color: var(--accent); border-color: var(--accent-soft); }
+.wake:active { transform: scale(.95); }
+.wake[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 12%, var(--bg-2));
+  animation: wake-pulse 2.4s ease-in-out infinite;
+}
+@keyframes wake-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--accent) 45%, transparent); }
+  50% { box-shadow: 0 0 0 8px transparent; }
+}
+
+/* Wake state badge, sits with the input hints. */
+.wake-badge {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .12em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  color: var(--fg-faint);
+  white-space: nowrap;
+}
+.wake-badge[data-mode="asleep"] { color: var(--fg-dim); }
+.wake-badge[data-mode="awake"] {
+  color: var(--accent);
+  border-color: var(--accent-soft);
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+}
+/* Attach button mirrors the wake button. */
+.attach {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  color: var(--fg-dim);
+  display: grid;
+  place-items: center;
+  flex: none;
+  transition: color .18s, border-color .18s, transform .12s;
+}
+.attach svg { width: 22px; height: 22px; }
+.attach:hover { color: var(--accent); border-color: var(--accent-soft); }
+.attach:active { transform: scale(.95); }
+
+/* Attachment chips above the composer. */
+.attach-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 0 8px;
+}
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 3px 6px 3px 9px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--accent) 10%, var(--bg-2));
+  border: 1px solid var(--accent-soft);
+  color: var(--fg-dim);
+  max-width: 100%;
+}
+.attach-chip .attach-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
+}
+.attach-chip.err {
+  border-color: var(--danger, #ff6b6b);
+  background: color-mix(in oklab, #ff6b6b 12%, var(--bg-2));
+}
+.attach-x {
+  background: none;
+  border: 0;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: .65;
+}
+.attach-x:hover { opacity: 1; }
+
+/* ------------------------------------------------ shared + generated files */
+
+.file-tray {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+  max-width: min(520px, 100%);
+}
+
+.file-card {
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--bg-2) 80%, transparent);
+  padding: 10px;
+  overflow: hidden;
+}
+
+.file-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.file-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-meta {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg-faint);
+  flex: none;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.file-image {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: var(--bg);
+  cursor: zoom-in;
+}
+
+.file-audio,
+.file-video {
+  display: block;
+  width: 100%;
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.file-video { max-height: 420px; }
+
+.file-generic {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg-dim);
+  padding: 14px;
+  text-align: center;
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.file-note {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  line-height: 1.5;
+}
+
+.file-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 10px;
+}
+
+.file-download {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+.file-download:hover { border-bottom-color: var(--accent); }
+
+/* Whole-window drop target. */
+body.dropping::after {
+  content: "Drop files to hand them to Sister RexenIOT";
+  position: fixed;
+  inset: 12px;
+  border: 2px dashed var(--accent);
+  border-radius: 16px;
+  background: color-mix(in oklab, var(--accent) 9%, transparent);
+  display: grid;
+  place-items: center;
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: .06em;
+  color: var(--accent);
+  pointer-events: none;
+  z-index: 60;
+}
+
+@keyframes halo { from { opacity: .7; transform: scale(.9); } to { opacity: 0; transform: scale(1.35); } }
+
+.input-wrap {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  padding: 10px 14px 7px;
+  transition: border-color .2s, box-shadow .2s;
+}
+.input-wrap:focus-within { border-color: var(--accent-soft); box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 9%, transparent); }
+
+#input {
+  width: 100%;
+  background: none;
+  border: none;
+  outline: none;
+  resize: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 14.5px;
+  line-height: 1.55;
+  max-height: 148px;
+}
+#input::placeholder { color: var(--fg-faint); }
+
+.input-hints {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  margin-top: 3px;
+}
+kbd {
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 9.5px;
+}
+.listen-hint { color: var(--accent); animation: blink 1.4s ease-in-out infinite; }
+
+.send {
+  width: 52px; height: 52px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+  color: #04121a;
+  transition: transform .1s, filter .2s;
+}
+.send svg { width: 20px; height: 20px; }
+.send:hover { filter: brightness(1.1); }
+.send:active { transform: scale(.95); }
+.send:disabled { background: var(--bg-3); color: var(--fg-faint); cursor: default; }
+
+/* ------------------------------------------------------------- fullscreen --- */
+
+/* One button, two glyphs: only the one matching the current mode is drawn. */
+#btn-fullscreen .fs-exit { display: none; }
+#btn-fullscreen[aria-pressed="true"] .fs-enter { display: none; }
+#btn-fullscreen[aria-pressed="true"] .fs-exit { display: block; }
+#btn-fullscreen[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+
+/* ============================================================================
+   Compatibility layer
+
+   Everything below exists so the HUD renders on older engines and on the very
+   large screens a wall display or a TV presents. Nothing here changes the look
+   on a current browser.
+   ========================================================================== */
+
+/* --- viewport height ------------------------------------------------------
+   `dvh` is the right unit, but it only exists in newer engines. Where it is
+   missing the browser drops the declaration and falls back to `height: 100%`,
+   which on a mobile browser counts the area *under* the URL bar and pushes the
+   composer off-screen. --vh is set from JavaScript and tracks the real visible
+   height, so the fallback is at least correct on the engines that need it. */
+@supports not (height: 100dvh) {
+  html, body { height: 100vh; height: calc(var(--vh, 1vh) * 100); }
+}
+
+/* --- colour mixing --------------------------------------------------------
+   `color-mix` needs Chrome 111, Safari 16.2 or Firefox 113. On anything older
+   every rule using it is discarded, which would leave panels transparent and
+   borders invisible. These overrides use the flat palette instead. */
+@supports not (background: color-mix(in oklab, red, blue)) {
+  :root { --accent-soft: var(--line-2); }
+
+  body::before {
+    background:
+      radial-gradient(1100px 620px at 78% -10%, rgba(255, 143, 177, .13), transparent 62%),
+      radial-gradient(820px 520px at 8% 108%, rgba(255, 143, 177, .08), transparent 60%);
+  }
+
+  .topbar { background: var(--bg-1); }
+  .persona-list li[aria-selected="true"] { background: var(--bg-3); }
+  .msg.assistant .avatar { border-color: var(--line-2); background: var(--bg-2); }
+  .tool-tray li.ok { border-color: var(--ok); }
+  .tool-tray li.bad { border-color: var(--err); color: var(--err); }
+  .composer { background: var(--bg-1); }
+  .rail { background: var(--bg-1); }
+  .persona-current { background: var(--bg-2); }
+  .mic.listening { box-shadow: 0 0 0 0 rgba(255, 143, 177, .45); }
+  .mic.armed { background: var(--bg-3); }
+  .input-wrap { background: var(--bg-2); }
+  .input-wrap:focus-within { border-color: var(--line-2); box-shadow: 0 0 0 3px rgba(255, 143, 177, .09); }
+  .osk-tray {
+    background:
+      linear-gradient(180deg, rgba(255, 143, 177, .07), transparent 60%),
+      var(--bg-1);
+  }
+  .osk-mode.active { border-color: var(--line-2); background: var(--bg-3); }
+}
+
+/* --- translucency ---------------------------------------------------------
+   The blurred, semi-transparent bars are decorative. A user who has asked the
+   system to reduce transparency gets opaque surfaces instead. */
+@media (prefers-reduced-transparency: reduce) {
+  .topbar, .composer, .rail, .persona-list, .toasts {
+    background: var(--bg-1);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+/* ============================================================================
+   Large screens: 10-foot UI for a wall panel or a TV
+   ========================================================================== */
+
+/* Scaled type and controls, with the rail given more of the width. */
+@media (min-width: 1600px) {
+  :root { --radius: 16px; --radius-sm: 11px; }
+
+  .app { max-width: 2100px; margin: 0 auto; }
+  .brand-mark { width: 34px; height: 34px; }
+  .brand-name { font-size: 13px; }
+  .brand-sub { font-size: 10.5px; }
+  .icon-btn { width: 40px; height: 40px; }
+  .icon-btn svg { width: 19px; height: 19px; }
+  .persona-current { padding: 8px 14px; }
+  .persona-name { font-size: 13px; }
+  .msg { max-width: 78ch; }
+  .msg .bubble { font-size: 15.5px; line-height: 1.7; }
+  .reactor svg { max-width: 230px; }
+  .input-wrap textarea { font-size: 16px; }
+  .send { width: 48px; height: 48px; }
+  .mic { width: 58px; height: 58px; }
+  .mic svg { width: 26px; height: 26px; }
+}
+
+/* A TV is often a 1080p panel driven at 1.5-2x, so match on physical pixels
+   rather than the CSS viewport alone. */
+@media (min-width: 1600px) and (min-height: 900px) {
+  .stats { font-size: 13px; }
+  .rail-block h3 { font-size: 11.5px; }
+}
+
+/* --- overscan -------------------------------------------------------------
+   TVs crop a few percent off every edge. Anything the user must be able to
+   press or read is kept inside a safe margin. `env()` reports the real inset
+   on platforms that expose one; the percentage floor covers the rest. */
+@media (min-width: 1600px) {
+  .topbar {
+    padding-left: max(28px, env(safe-area-inset-left, 0px));
+    padding-right: max(28px, env(safe-area-inset-right, 0px));
+  }
+  .composer {
+    padding-left: max(28px, env(safe-area-inset-left, 0px));
+    padding-right: max(28px, env(safe-area-inset-right, 0px));
+    padding-bottom: max(18px, env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* --- very large: a 4K wall panel ------------------------------------------ */
+@media (min-width: 2400px) {
+  .app { max-width: 2600px; }
+  .msg .bubble { font-size: 17px; }
+  .reactor svg { max-width: 280px; }
+  .viz { height: 70px; }
+  .input-wrap textarea { font-size: 17px; }
+}
+
+/* --- landscape phones and short windows -----------------------------------
+   In landscape on a phone the viewport is barely taller than the header and
+   composer together, so the side rail is folded away to give the conversation
+   the full width. */
+@media (max-height: 520px) and (orientation: landscape) {
+  .rail { display: none; }
+  .stage { grid-template-columns: 1fr; }
+  .topbar { padding-block: 6px; }
+  .brand-sub { display: none; }
+  .osk-tray { max-height: 60vh; }
+  .osk-key { height: 34px; font-size: 13px; }
+}
+
+
+.toasts {
+  position: fixed;
+  right: 20px;
+  /* Clear the composer, and any soft keyboard above it, so a toast never lands
+     over Send. --dock-h is the measured height of that furniture (see
+     trackDockHeight in app.js); the fallback covers the first paint. */
+  bottom: calc(var(--dock-h, 112px) + env(safe-area-inset-bottom, 0px) + 12px);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  z-index: 60;
+  max-width: min(360px, 88vw);
+  /* The container spans the corner it is anchored to; only its children should
+     take taps, so it never swallows a click aimed at something beneath it. */
+  pointer-events: none;
+}
+.toasts > * { pointer-events: auto; }
+.toast {
+  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-left: 2px solid var(--accent);
+  font-size: 12.5px;
+  box-shadow: var(--shadow);
+  animation: rise .3s var(--ease);
+}
+.toast.err { border-left-color: var(--err); }
+.toast.ok { border-left-color: var(--ok); }
+
+.audio-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 15px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  border: 1px solid var(--accent-soft);
+  border-left: 2px solid var(--accent);
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 500;
+  box-shadow: var(--shadow);
+  animation: rise .3s var(--ease);
+}
+.audio-hint:hover { background: var(--bg-3); }
+
+/* -------------------------------------------------- on-screen keyboard --- */
+
+/* The outer element is the drive slot. It is clipped to zero height when shut
+   and the tray inside slides out of it; animating grid-template-rows from 0fr
+   to 1fr keeps the shell's height honest without measuring the tray in JS. */
+.osk {
+  display: grid;
+  grid-template-rows: 0fr;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  /* The slot clips the tray, so it only shows what has slid out of it. */
+  overflow: hidden;
+  transition: grid-template-rows .5s var(--ease), border-color .5s var(--ease);
+}
+.osk[hidden] { display: none; }
+.osk.open { grid-template-rows: 1fr; border-top-color: var(--accent-soft); }
+
+.osk-tray {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 12px max(10px, env(safe-area-inset-bottom, 10px));
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--accent) 7%, transparent), transparent 60%),
+    var(--bg-1);
+  /* Out of the slot travelling up, and a touch of recoil as it seats. */
+  transform: translateY(102%);
+  transition: transform .52s var(--ease);
+  max-height: 46vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: manipulation;
+}
+.osk.open .osk-tray { transform: translateY(0); }
+
+/* The leading edge of the tray, doing the work of the slot's indicator light. */
+.osk-lip {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0;
+  transition: opacity .3s var(--ease) .12s;
+  overflow: hidden;
+}
+.osk.open .osk-lip { opacity: 1; }
+.osk-sweep {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .85), transparent);
+  transform: translateX(-100%);
+}
+.osk.open .osk-sweep { animation: osk-sweep .85s var(--ease) .1s; }
+
+@keyframes osk-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+.osk-bar { display: flex; align-items: center; gap: 10px; }
+.osk-title { font-size: 10px; font-family: var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--fg-faint); }
+.osk-modes { display: flex; gap: 4px; margin-left: auto; }
+.osk-mode {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--fg-dim);
+}
+.osk-mode.active { color: var(--accent); border-color: var(--accent-soft); background: color-mix(in oklab, var(--accent) 12%, transparent); }
+.osk-close { width: 26px; height: 26px; display: grid; place-items: center; background: none; border: none; color: var(--fg-faint); }
+.osk-close:hover { color: var(--fg); }
+.osk-close svg { width: 14px; height: 14px; }
+
+.osk-rows { display: flex; flex-direction: column; gap: 5px; }
+.osk-row { display: flex; gap: 5px; justify-content: center; }
+.osk-key {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 42px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-size: 15px;
+  font-family: var(--sans);
+  cursor: pointer;
+  transition: background .12s, border-color .12s, transform .08s;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  /* Keys fly into place on the tray's own timing, staggered by render(). */
+  animation: osk-key-in .32s var(--ease) both;
+}
+@keyframes osk-key-in {
+  from { opacity: 0; transform: translateY(10px) scale(.86); }
+  to { opacity: 1; transform: none; }
+}
+.osk-key:active, .osk-key.pressed { transform: scale(.94); border-color: var(--accent-soft); background: var(--bg-3); }
+.osk-key.wide { flex: 1.6 1 0; font-size: 11px; font-family: var(--mono); color: var(--fg-dim); letter-spacing: .04em; }
+.osk-key.space { flex: 4 1 0; }
+.osk-key.active { color: var(--accent); border-color: var(--accent-soft); }
+
+@media (max-width: 680px) {
+  .osk-tray { max-height: 42vh; padding: 8px 8px max(8px, env(safe-area-inset-bottom, 8px)); }
+  .osk-key { height: 40px; font-size: 14px; }
+  /* A toast pinned to the bottom corner would sit on top of the soft keyboard. */
+  .toasts { bottom: auto; top: calc(env(safe-area-inset-top, 0px) + 62px); right: 12px; left: 12px; max-width: none; align-items: center; }
+}
+
+/* The wordmark is written as words now, so it fits without the letter-by-letter
+   scaling the spaced-out version needed; only a small floor is required. */
+@media (max-width: 719px) {
+  .boot-title { font-size: clamp(17px, 5.4vw, 26px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .osk, .osk-tray, .osk-lip { transition-duration: .01ms; }
+  .osk.open .osk-sweep { animation: none; }
+  .osk-key { animation: none; }
+}
+
+/* ------------------------------------------------------------ responsive --- */
+
+@media (max-width: 1020px) {
+  .stage { grid-template-columns: 1fr; }
+  .rail { display: none; }
+}
+/* Below iPad width the wordmark duplicates the persona pill. With the default
+   persona active both read "Sister RexenIOT", so the same words appear twice in
+   one row. The pill is the functional one -- it names the selected personality
+   and opens the picker -- so the static wordmark yields. The mark icon stays, so
+   the header is still branded. */
+@media (max-width: 767px) {
+  .brand-text { display: none; }
+}
+
+@media (max-width: 680px) {
+  /* The topbar holds the brand, the persona picker and the action buttons. On a
+     phone those do not fit on one line, and because `body` is `overflow: hidden`
+     the surplus is *clipped* rather than scrollable -- the buttons end up off
+     screen and untappable, and `scrollWidth` still reports no overflow, so an
+     automated width check sees nothing wrong. Wrapping is what keeps every
+     control reachable at any width. */
+  .topbar { gap: 10px; padding: 10px 12px; flex-wrap: wrap; }
+  .brand-sub, .pill { display: none; }
+  /* The wordmark is mixed case and narrower than the old all-caps form, so it
+     shares the first row with the persona pill and the buttons wrap below. */
+  .top-actions { gap: 6px; }
+  .icon-btn { width: 32px; height: 32px; }
+  .messages { padding: 18px 15px 8px; }
+  .composer { padding: 12px 12px 16px; gap: 9px; }
+  .mic, .send { width: 46px; height: 46px; }
+  .tool-tray { padding: 8px 15px 10px; }
+  .persona-list { min-width: min(92vw, 320px); }
+
+  /* The picker stacks a name over a tag; at phone width the tag wraps and the
+     button grows to two rows. Drop the tag and keep it a single pill. */
+  .persona-picker { margin-left: 0; }
+  .persona-current { padding: 6px 10px; gap: 7px; }
+  .persona-tag { display: none; }
+  .persona-name {
+    max-width: 34vw;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Reclaim vertical space for the conversation itself: the header and the
+     composer are chrome, the messages are the point. */
+  .messages { gap: 14px; padding-top: 14px; }
+  .composer { padding-bottom: max(12px, env(safe-area-inset-bottom, 12px)); }
+  .tool-tray { max-height: 96px; }
+  .attach-strip { max-height: 96px; }
+  .msg { gap: 10px; }
+  /* Touch keyboards have no Enter/Shift keys, so the shortcut row is dead weight;
+     the listening and wake-word badges on the same row stay. */
+  .kbd-hints { display: none; }
+  .input-hints { justify-content: flex-end; margin-top: 1px; }
+}
+
+/* Very narrow phones (~320px): the persona pill and the action buttons cannot
+   share a row, so trim the pill to keep the header at two rows. */
+@media (max-width: 360px) {
+  .persona-current { padding: 6px 8px; gap: 6px; }
+  .persona-name { max-width: 30vw; }
+  .topbar { gap: 8px; }
+}
+
+/* The persona dropdown is anchored to the picker's left edge, which on a phone
+   sits well right of centre -- so a 320px panel runs past the right of the
+   screen and the app shell clips the rows. Pin it to the viewport instead, just
+   under the header, and let it span the available width. --topbar-b is measured
+   in app.js because the header wraps to two rows on narrow screens. */
+@media (max-width: 680px) {
+  .persona-list {
+    position: fixed;
+    top: calc(var(--topbar-b, 48px) + 8px);
+    left: 12px;
+    right: 12px;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    max-height: min(58vh, 420px);
+  }
+}
+
+/* Short landscape phones: every pixel of chrome is a pixel off the chat. */
+@media (max-width: 680px) and (max-height: 520px) {
+  .topbar { padding: 6px 10px; }
+  .composer { padding: 8px 10px 10px; }
+  .mic, .send { width: 42px; height: 42px; }
+  .messages { gap: 11px; padding: 10px 12px 6px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

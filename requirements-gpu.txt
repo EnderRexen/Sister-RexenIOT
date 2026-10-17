@@ -1,0 +1,17 @@
+# Sister RexenIOT - GPU acceleration for the ONNX speech tiers (nano / micro / mini)
+#
+# onnxruntime-gpu is a drop-in replacement for onnxruntime: same import name, same
+# API, but it adds the CUDA and TensorRT execution providers. Install it *instead
+# of* the CPU package, never alongside it, or the two fight over the same module:
+#
+#   pip uninstall -y onnxruntime
+#   pip install -r requirements-gpu.txt
+#
+# Requires an NVIDIA driver and a CUDA runtime that matches the build. If the GPU
+# is not usable the speech engine falls back to CPU on its own, so this is safe to
+# install on a machine that later loses its GPU.
+#
+# AMD users: onnxruntime-rocm is the equivalent package. It is not listed here
+# because the wheel index differs per ROCm version; see the ROCm install docs.
+
+onnxruntime-gpu>=1.19

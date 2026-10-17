@@ -1,0 +1,25 @@
+# Sister RexenIOT - full tier extras
+#
+# Only needed for the 1.7B KittenTTS 2 speech model: 47 voices, voice cloning
+# and emotion tags. Adds roughly 2.5 GB. Install on top of requirements.txt:
+#
+#   pip install -r requirements.txt -r requirements-full.txt
+#
+# The hardware scan recommends this tier only when a GPU is present, because on
+# a CPU the ONNX models are faster per character.
+
+kittenml==0.9.4
+torch>=2.6
+torchaudio>=2.6
+transformers>=4.55
+safetensors
+scipy
+librosa
+einops
+diffusers
+omegaconf
+hydra-core
+s3tokenizer
+resemble-perth
+pyloudnorm
+brotli

@@ -1,0 +1,22 @@
+# Line endings are load-bearing here, not cosmetic.
+#
+# cmd.exe mis-parses LF-only batch files: goto/label matching, parenthesised
+# blocks and for loops fail, usually silently rather than with an error. Bash
+# does the opposite -- a CRLF shebang script dies with "bad interpreter".
+# So each file type is pinned to the ending its interpreter needs, and git is
+# told never to "helpfully" convert them on checkout.
+
+* text=auto eol=lf
+
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+*.sh text eol=lf
+
+# Binary so no conversion is ever attempted.
+*.zip binary
+*.png binary
+*.ico binary
+*.wav binary
+*.onnx binary
+*.tar.gz binary
