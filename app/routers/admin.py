@@ -91,17 +91,24 @@ async def put_config(
     if patch.get("admin_token") == "***":
         patch.pop("admin_token", None)
 
+    # A TTS model change must take effect on the next request, not at restart.
+    # Load it *before* persisting: config.update() writes to disk, so a model
+    # that cannot load would otherwise be recorded permanently and retried on
+    # every start, with only a log line to show for it. Same ordering as
+    # /hardware/apply.
+    new_model = (patch.get("tts") or {}).get("model_id")
+    if new_model:
+        try:
+            await asyncio.to_thread(engine.ensure_loaded, new_model)
+        except Exception as exc:
+            raise HTTPException(
+                400, f"Could not load TTS model '{new_model}': {exc}"
+            ) from exc
+
     try:
         cfg = config.update(patch)
     except Exception as exc:
         raise HTTPException(400, f"Invalid configuration: {exc}") from exc
-
-    # A TTS model change must take effect on the next request, not at restart.
-    if "tts" in patch and "model_id" in patch.get("tts", {}):
-        try:
-            await asyncio.to_thread(engine.ensure_loaded, patch["tts"]["model_id"])
-        except Exception as exc:
-            log.warning("TTS reload failed: %s", exc)
 
     llm_client.refresh()
     return config.public_view(cfg)

@@ -133,6 +133,30 @@ identifiers, env vars, log names or filenames. The conventions are
   `{"applied": {}, "error": ...}` and leaves config untouched;
   `web/js/admin.js` checks `result.error` (any 200 used to read as success).
   Pinned by `scripts/test_apply_rollback.py`, which fails against the old order.
+- **`PUT /api/admin/config` also loads the TTS model before persisting.** It had
+  the same persist-first bug as `/hardware/apply`: a model that could not load
+  was written to disk, then every start retried it, with one `log.warning` as
+  evidence. It now raises 400 naming the model and leaves config alone. The
+  admin's `api()` helper surfaces `detail`, so the operator sees the reason.
+  Pinned by `scripts/test_config_tts_rollback.py` (5 of 7 red against the old
+  order) and `scripts/test_config_ui_error.py`.
+- **Friendly voice names are the vendor's own contract, not our invention.**
+  `KittenML/kitten-tts-mini-0.8`'s `config.json` ships `voice_aliases` mapping
+  Bella/Jasper/Luna/Bruno/Rosie/Hugo/Kiki/Leo onto `expr-voice-N-m/f`, and
+  `_prepare_inputs` resolves them before validating. `BASE_VOICES` in
+  `app/tts/engine.py` matches the list exactly. The ONNX `generate(text, voice,
+  speed)` signature we call is correct — but note the vendor's *default* voice is
+  `expr-voice-5-m`, so passing a bogus name raises rather than silently
+  defaulting; the engine pre-validates against `self._voices` first.
+- **Personality voices are all valid** (verified against the loaded engine).
+  Do not "fix" Kiki — it is a real vendor alias, and it was already correct.
+- **`data/` is runtime state, not shipped defaults.** Config is generated from
+  the Pydantic schema; `data/config.json` is gitignored. Checking this sandbox's
+  file to infer product defaults produced a false bug report once already.
+- **`dev-stack.sh` is idempotent and will NOT restart a running app**, so an
+  edited router keeps serving stale code. Kill the `app.main` PID first, or the
+  fix will look like it did not work. Verify with `ps -eo pid,etime,cmd | grep
+  app.main` that the process age is seconds, not minutes.
 - Model catalog `preferred: True` wins over raw score in `hardware.recommend()`.
   Needed because score alone picked Qwen2.5 7B/14B over the newer Qwen3 models
   (`_score` rewards parameters, not recency).
@@ -155,6 +179,7 @@ identifiers, env vars, log names or filenames. The conventions are
 ## Testing
 - Suites: `test_osk.py`, `test_recommend.py`, `test_admin_gpu.py`,
   `test_tts_device.py`, `test_apply_rollback.py`, `test_apply_ui.py`,
+  `test_config_contract.py`, `test_config_tts_rollback.py`, `test_config_ui_error.py`,
   `audit_pages.py`, `mobile_measure.py`. All green, 0 console errors.
 - `test_tts_device.py` fakes `onnxruntime` via `sys.modules` to simulate a CUDA
   build - the pattern to copy when testing GPU branches on a GPU-less box.
