@@ -50,6 +50,14 @@ vanilla JS frontend, KittenTTS for speech.
   trap as the phonemiser (bundled wheel, not on `PATH`) and the profile cache.
 - `admin.js` is `<script type="module">`: its functions are **not** global, so UI
   tests must intercept `window.fetch` rather than call `renderModels` directly.
+- **Test against the shipped archive, not the dev tree.** `/admin/models` scans on
+  first call because a fresh install has no cached profile; without it every entry
+  lacked `fits` and every Download button was disabled. The live box cannot
+  reproduce first-run bugs — it has accumulated state. Extract
+  `web/download/SisterRexenIOT.zip` to a temp dir and boot with
+  `REXENIOT_HOME=<tmp>` (`scripts/test_fresh_install_models.py`).
+- Kill stray test servers by PID from `ps aux | grep "[u]vicorn"`. `ss -ltnp`
+  silently matches nothing here, and `keep-alive.sh` respawns anything on 12000.
 
 ## Hardware verification (`hardware.plan`)
 
