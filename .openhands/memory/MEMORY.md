@@ -29,6 +29,28 @@ vanilla JS frontend, KittenTTS for speech.
   `collectConfigPatch` in `web/js/admin.js` nests them, so only hand-built calls
   are at risk.
 
+## Model catalog contract (admin Hardware tab)
+
+- The model list is rendered from **two** endpoints: `recommendations.models` in
+  the scan/`/hardware` payload, and `catalog` from `/admin/models`. `renderModels`
+  reads `fits` / `blockers` / `requirements` / `downloaded` / `active` /
+  `prerequisites` — annotate **both** paths (`_catalog_view`, `_with_model_state`)
+  or a badge shows on one and not the other.
+- `ALL_MODELS` is the raw catalog and has none of those fields. Serving it directly
+  is what disabled every Download button.
+- `model_catalog.prerequisites(entry)` -> the requirement set a model needs and
+  whether it resolves. `REQUIREMENT_SETS` maps a **set key** (`full`, `gpu`) to a
+  requirements file that ships with the app; the install endpoint accepts only
+  those keys, never a package name.
+- `/admin/models/load` refuses with 409 when prerequisites are unmet, naming the
+  missing module and the pip command.
+- **Do not judge a capability by `find_spec`.** `onnxruntime` and
+  `onnxruntime-gpu` share an import name, so the GPU set looked satisfied on a
+  CPU-only box; `missing_for("gpu")` checks `CUDAExecutionProvider` instead. Same
+  trap as the phonemiser (bundled wheel, not on `PATH`) and the profile cache.
+- `admin.js` is `<script type="module">`: its functions are **not** global, so UI
+  tests must intercept `window.fetch` rather than call `renderModels` directly.
+
 ## Hardware verification (`hardware.plan`)
 
 - `hardware.plan(profile, cfg)` returns `{steps, patch, changed, notes, ...}` and
