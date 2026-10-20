@@ -29,6 +29,37 @@ vanilla JS frontend, KittenTTS for speech.
   `collectConfigPatch` in `web/js/admin.js` nests them, so only hand-built calls
   are at risk.
 
+## Hardware verification (`hardware.plan`)
+
+- `hardware.plan(profile, cfg)` returns `{steps, patch, changed, notes, ...}` and
+  **writes nothing**. `GET /api/admin/hardware/plan` reads; `POST
+  /hardware/plan/run` applies with `{"verify": true}` (default) which loads the
+  model and synthesises a phrase *before* persisting, so a plan that cannot speak
+  leaves the config alone. Same ordering rule as `/hardware/apply`.
+- Proposed settings come from the same `_fits`/`_score`/catalog path that builds
+  the model list, so the two cannot disagree. Do not add a second tier->repo map.
+- **Only propose a device when it changes behaviour.** `_pick_device` returns
+  `"cpu"` with no GPU, but `"auto"` already means CPU there; proposing that flip
+  changes the config for no runtime gain and drops the shipped `balanced` profile
+  out of "in use" (it pins `device: "auto"`). Keep `cpu` if already `cpu`, else
+  settle on `auto`.
+- **`PROFILE_VERSION` in `app/hardware.py` guards the cached profile.** Add a probe
+  to `_accelerators()`/`_runtimes()` and you must bump it: `cached()` returns None
+  on mismatch so callers rescan. Otherwise a reader asking for a key the cache
+  predates reports it missing, which reads as a *real finding* (this produced two
+  false warnings: first `device`/`devices`, then `phonemiser`).
+- **The phonemiser can come from `espeakng_loader`, not PATH.** The wheel ships its
+  own espeak-ng binary and is a hard dep (`app/main.py`). `shutil.which()` alone
+  reports a working install as broken. Use the `phonemiser` flag.
+- A GPU-less box may still have a **CUDA-build torch** (`2.14.1+cu130`). That is
+  normal in a container and is not a driver fault -- do not tell the user to check
+  `nvidia-smi` when no GPU is present. `/accelerator` returns no hints at all when
+  `not profile.get("gpu")`.
+- `_nvidia_driver_only()` reads `/proc/driver/nvidia/version` and `/dev/nvidia*`
+  to distinguish "no GPU" from "GPU the runtimes cannot reach". `torch.cuda` also
+  gets a real `torch.zeros(8, device="cuda")` allocation, because
+  `is_available()` can be True while allocation fails.
+
 ## Voice profiles (T4)
 
 - `app/profiles.py` + `data/voice_profiles.json`. Six built-ins (balanced,
@@ -248,7 +279,22 @@ identifiers, env vars, log names or filenames. The conventions are
 - Suites: `test_osk.py`, `test_recommend.py`, `test_admin_gpu.py`,
   `test_tts_device.py`, `test_apply_rollback.py`, `test_apply_ui.py`,
   `test_config_contract.py`, `test_config_tts_rollback.py`, `test_config_ui_error.py`,
-  `audit_pages.py`, `mobile_measure.py`. All green, 0 console errors.
+  `test_hardware_plan.py`, `test_hardware_verify_ui.py`, `test_profiles.py`,
+  `test_profiles_ui.py`, `audit_pages.py`, `mobile_measure.py`.
+  All green except `test_attach_ui.py` (see below).
+- **Server-side suites need `PYTHONPATH=.`** or `import app` fails. UI suites take
+  the base URL as argv[1] (default `http://127.0.0.1:8060`).
+- `test_hardware_plan.py` simulates profiles (5070-class, no-GPU, unreachable GPU,
+  failed CUDA allocation, driver-only) so the GPU branches are exercised on this
+  GPU-less box. `test_hardware_verify_ui.py` drives the real endpoints: it first
+  *downgrades* the tier over the API so the plan has a real change to propose, then
+  asserts apply-with-test produced audio and the config agrees.
+- **`test_attach_ui.py` FAILS on a clean tree** -- it needs `/tmp/uptest/usage.csv`
+  and a local model that echoes file contents. Pre-existing and unrelated to any
+  hardware work; verify with `git stash` before blaming a change.
+- When a plan change alters `tts.*`, check `test_profiles_ui.py` too: profile
+  "in use" detection is an exact match, so a needless config write can silently
+  break it. That is how the no-op device bug was found.
 - `test_tts_device.py` fakes `onnxruntime` via `sys.modules` to simulate a CUDA
   build - the pattern to copy when testing GPU branches on a GPU-less box.
 - `test_apply_rollback.py` redirects `config.DATA_DIR`/`CONFIG_PATH` to a temp dir
