@@ -243,12 +243,22 @@ function renderModels(models) {
     if (req.gpu) reqBits.push("GPU");
     const blockers = (m.blockers || []).map(escapeHtml).join("; ");
     const caveats = (m.caveats || []).map(escapeHtml).join("; ");
+    const pre = m.prerequisites || {};
+    // A model whose prerequisites are unmet is downloadable but not runnable, so
+    // it must not read as ready. Offer the install instead of a silent dead end.
+    const needsSetup = Boolean(pre.needed && !pre.satisfied);
+    const primary = needsSetup
+      ? `<button class="btn-primary" data-install="${escapeHtml(pre.key)}"
+           title="${escapeHtml(pre.detail || "")}">Install ${escapeHtml(pre.label)}</button>`
+      : `<button class="btn-ghost" data-download="${escapeHtml(m.repo)}" data-kind="${m.kind}"
+           ${m.fits ? "" : "disabled"}>${m.kind === "llm" ? "How to get" : "Download"}</button>`;
     return `
-      <div class="model-row ${m.fits ? "" : "unfit"}">
+      <div class="model-row ${m.fits ? "" : "unfit"} ${m.active ? "in-use" : ""}">
         <div class="model-main">
           <div class="model-title">
             <span class="kind-tag kind-${m.kind}">${m.kind}</span>
             <strong>${escapeHtml(m.name)}</strong>
+            ${m.active ? '<span class="badge ok">in use</span>' : ""}
             ${m.downloaded ? '<span class="badge ok">downloaded</span>' : ""}
             ${m.fits ? '<span class="badge ok">fits</span>' : '<span class="badge bad">unfit</span>'}
           </div>
@@ -257,17 +267,22 @@ function renderModels(models) {
           ${reqBits.length ? `<div class="model-req">Needs ${reqBits.join(", ")} · ${m.size_mb ? m.size_mb + " MB" : ""}</div>` : ""}
           ${blockers ? `<div class="model-block">Blocked: ${blockers}</div>` : ""}
           ${caveats ? `<div class="model-caveat">${caveats}</div>` : ""}
+          ${needsSetup ? `<div class="model-caveat">Needs ${escapeHtml(pre.label)} — ${escapeHtml(pre.detail || "")} ${escapeHtml(pre.command || "")}</div>` : ""}
         </div>
         <div class="model-actions">
-          <button class="btn-ghost" data-download="${escapeHtml(m.repo)}" data-kind="${m.kind}"
-            ${m.fits ? "" : "disabled"}>${m.kind === "llm" ? "How to get" : "Download"}</button>
-          ${m.kind === "tts" ? `<button class="btn-ghost" data-usetts="${escapeHtml(m.repo)}">Use</button>` : ""}
+          ${primary}
+          ${m.kind === "tts" ? `<button class="btn-ghost ${m.active ? "is-active" : ""}"
+            data-usetts="${escapeHtml(m.repo)}" ${m.active ? "disabled" : ""}
+            >${m.active ? "✓ In use" : "Use"}</button>` : ""}
         </div>
       </div>`;
   }).join("");
 
   list.querySelectorAll("[data-download]").forEach((btn) => {
     btn.addEventListener("click", () => downloadModel(btn.dataset.download, btn.dataset.kind));
+  });
+  list.querySelectorAll("[data-install]").forEach((btn) => {
+    btn.addEventListener("click", () => installPrerequisites(btn.dataset.install));
   });
   list.querySelectorAll("[data-usetts]").forEach((btn) => {
     btn.addEventListener("click", () => useTtsModel(btn.dataset.usetts));
@@ -329,6 +344,68 @@ async function downloadModel(repo, kind) {
     toast(`Download failed: ${err.message}`, "err");
     setSaveState("idle");
   }
+  await refreshModels();
+}
+
+async function installPrerequisites(key) {
+  if (!confirm(
+    "Install this requirement set with pip on the app's Python?\n\n"
+    + "This downloads a large package set and may take several minutes. "
+    + "The app keeps running; speech is unaffected while it installs."
+  )) return;
+  setSaveState("installing prerequisites…", "warn");
+  let job;
+  try {
+    job = await api("/admin/models/prerequisites/install", {
+      method: "POST",
+      body: JSON.stringify({ set: key }),
+    });
+  } catch (err) {
+    toast(`Could not start the install: ${err.message}`, "err");
+    setSaveState("idle");
+    return;
+  }
+
+  // Poll until the job leaves "running", then re-read the catalog so the row
+  // reflects what actually happened rather than what we asked for.
+  const deadline = Date.now() + 31 * 60 * 1000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 3000));
+    let status;
+    try {
+      status = await api("/admin/models/prerequisites/status");
+    } catch {
+      continue;
+    }
+    const install = status.install || {};
+    if (install.state === "running") {
+      setSaveState(`installing ${install.label || key}…`, "warn");
+      continue;
+    }
+    if (install.state === "done") {
+      setSaveState("installed", "ok");
+      toast(`${install.label || key} installed.`, "ok");
+    } else if (install.state === "error") {
+      setSaveState("install failed", "err");
+      toast(`Install failed: ${install.detail || "unknown error"}`, "err");
+      if (install.log) console.warn("pip output:\n" + install.log);
+    }
+    break;
+  }
+  await refreshModels();
+}
+
+async function refreshModels() {
+  try {
+    const data = await api("/admin/models");
+    if (state.hardware) {
+      state.hardware.recommendations = {
+        ...(state.hardware.recommendations || {}),
+        models: data.catalog || [],
+      };
+    }
+    renderModels(data.catalog || []);
+  } catch { /* the next scan will correct the list */ }
 }
 
 async function useTtsModel(repo) {
@@ -339,6 +416,9 @@ async function useTtsModel(repo) {
     setSaveState("ready", "ok");
     renderTtsStatus();
     await refreshConfig();
+    // Re-read the catalog so the "in use" badge and green button land on the row
+    // that just became active, rather than only after the next scan.
+    await refreshModels();
   } catch (err) {
     toast(`Could not load model: ${err.message}`, "err");
     setSaveState("idle");

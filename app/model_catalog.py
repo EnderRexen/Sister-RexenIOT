@@ -6,6 +6,7 @@ rather than growing an if-tree per model. ``kind`` groups entries in the admin U
 
 from __future__ import annotations
 
+import importlib.util
 from typing import Any, Literal
 
 Kind = Literal["tts", "llm", "stt", "embedding"]
@@ -173,3 +174,76 @@ def tier_of_repo(repo: str) -> str | None:
         if entry["repo"] == repo:
             return tier
     return None
+
+
+#: Requirement sets a model can depend on, and the file that installs each. These
+#: are the repo's own files, never a package name from a request: the install
+#: endpoint takes a set key and nothing else, so it cannot be steered into
+#: installing something arbitrary.
+REQUIREMENT_SETS: dict[str, dict[str, Any]] = {
+    "full": {
+        "label": "PyTorch stack",
+        "file": "requirements-full.txt",
+        "detail": "Adds ~2.5 GB. Required by the 1.7B speech tier.",
+    },
+    "gpu": {
+        "label": "ONNX GPU runtime",
+        "file": "requirements-gpu.txt",
+        "detail": "Replaces the CPU ONNX runtime so the light tiers can use a GPU.",
+    },
+}
+
+#: The import each requirement set exists to provide. Checked by import rather
+#: than against a pip list, so a partial install is reported as partial.
+_REQUIREMENT_PROBES: dict[str, list[str]] = {
+    "full": ["torch", "torchaudio", "transformers", "kittenml"],
+    "gpu": ["onnxruntime"],
+}
+
+
+def _ort_has_cuda() -> bool:
+    """True when the installed onnxruntime can actually use a CUDA GPU.
+
+    ``onnxruntime`` and ``onnxruntime-gpu`` share the import name, so an import
+    check cannot tell them apart -- it reports the GPU runtime as satisfied while
+    only the CPU build is present. The execution providers are the real signal.
+    """
+    try:
+        import onnxruntime as ort  # noqa: PLC0415
+
+        return "CUDAExecutionProvider" in ort.get_available_providers()
+    except Exception:
+        return False
+
+
+def missing_for(key: str) -> list[str]:
+    """What a requirement set still lacks, as human-readable items."""
+    if key == "gpu":
+        return [] if _ort_has_cuda() else ["onnxruntime-gpu (CUDA build)"]
+    return [m for m in _REQUIREMENT_PROBES.get(key, []) if importlib.util.find_spec(m) is None]
+
+
+def prerequisites(entry: dict[str, Any]) -> dict[str, Any]:
+    """The requirement set a catalog entry needs, and whether it is satisfied.
+
+    The 1.7B tier advertises ``requires.torch``, but nothing acted on it: the
+    Download button fetched weights and the load then failed at import. Report the
+    set and whether its imports resolve so the panel can offer to install it.
+    """
+    requires = entry.get("requires") or {}
+    key = "full" if requires.get("torch") else None
+    if key is None:
+        return {"needed": False, "key": None, "label": "", "detail": "",
+                "satisfied": True, "missing": [], "command": ""}
+
+    missing = missing_for(key)
+    spec = REQUIREMENT_SETS[key]
+    return {
+        "needed": True,
+        "key": key,
+        "label": spec["label"],
+        "detail": spec["detail"],
+        "satisfied": not missing,
+        "missing": missing,
+        "command": f'pip install -r {spec["file"]}',
+    }

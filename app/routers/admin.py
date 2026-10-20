@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import shutil
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -125,7 +126,7 @@ async def hardware_scan(
     _check(x_admin_token)
     profile = await asyncio.to_thread(hardware.scan, True)
     profile["summary"] = hardware.summary(profile)
-    return profile
+    return _with_model_state(profile)
 
 
 @router.get("/hardware")
@@ -135,7 +136,7 @@ async def hardware_cached(x_admin_token: str | None = Header(default=None)) -> d
     if not profile:
         return {"scanned": False}
     profile["summary"] = hardware.summary(profile)
-    return {"scanned": True, **profile}
+    return _with_model_state({"scanned": True, **profile})
 
 
 @router.get("/storage")
@@ -352,6 +353,129 @@ class DownloadRequest(BaseModel):
     kind: str = "tts"
 
 
+class InstallRequest(BaseModel):
+    """A requirement *set* key from ``model_catalog.REQUIREMENT_SETS``.
+
+    Deliberately not a package name: the endpoint only ever runs pip against a
+    requirements file that ships with the app, so a request cannot ask it to
+    install an arbitrary distribution from an arbitrary index.
+    """
+
+    set: str
+
+
+#: The one install running at a time. Installs are serialised because two pip
+#: runs against the same interpreter corrupt each other's metadata.
+_INSTALL: dict[str, Any] = {"job": None}
+_INSTALL_LOCK = asyncio.Lock()
+_INSTALL_LOG_LIMIT = 4000
+_INSTALL_TIMEOUT = 1800
+
+
+def _install_state() -> dict[str, Any]:
+    """A copy of the job, safe to serialise."""
+    job = _INSTALL["job"]
+    return dict(job) if job else {"state": "idle"}
+
+
+async def _run_install(key: str, requirements: Path) -> None:
+    """Run pip for ``requirements``, recording output for the panel to poll."""
+    job = _INSTALL["job"]
+    proc = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "pip", "install", "-r", str(requirements),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=str(config.ROOT),
+        )
+        job["pid"] = proc.pid
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=_INSTALL_TIMEOUT)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            job.update(state="error", finished_at=time.time(),
+                       detail=f"Install timed out after {_INSTALL_TIMEOUT // 60} minutes.")
+            return
+        text = (out or b"").decode("utf-8", "replace")
+        job["log"] = text[-_INSTALL_LOG_LIMIT:]
+        if proc.returncode != 0:
+            job.update(state="error", finished_at=time.time(),
+                       detail=f"pip exited with code {proc.returncode}.")
+            return
+        missing = model_catalog.missing_for(key)
+        if missing:
+            # pip can succeed while an import still fails (a partial wheel, or a
+            # dependency that needs a restart to be visible). Do not claim success.
+            job.update(state="error", finished_at=time.time(),
+                       detail=f"Installed, but these still do not resolve: {', '.join(missing)}.")
+            return
+        job.update(state="done", finished_at=time.time(),
+                   detail=f"{model_catalog.REQUIREMENT_SETS[key]['label']} installed.")
+    except Exception as exc:  # noqa: BLE001 - surfaced to the panel
+        job.update(state="error", finished_at=time.time(),
+                   detail=f"{type(exc).__name__}: {exc}")
+    finally:
+        _INSTALL["job"] = job
+
+
+@router.post("/models/prerequisites/install")
+async def install_prerequisites(
+    body: InstallRequest, x_admin_token: str | None = Header(default=None)
+) -> dict[str, Any]:
+    """Install one requirement set in the background and return the job handle."""
+    _check(x_admin_token)
+    spec = model_catalog.REQUIREMENT_SETS.get(body.set)
+    if spec is None:
+        raise HTTPException(400, f"Unknown requirement set '{body.set}'.")
+    requirements = config.ROOT / spec["file"]
+    if not requirements.is_file():
+        raise HTTPException(404, f"{spec['file']} is missing from the install.")
+    if _INSTALL_LOCK.locked():
+        raise HTTPException(409, "Another install is already running.")
+
+    job = {
+        "state": "running",
+        "key": body.set,
+        "label": spec["label"],
+        "detail": f"Installing {spec['label']}…",
+        "command": f'pip install -r {spec["file"]}',
+        "started_at": time.time(),
+        "finished_at": None,
+        "pid": None,
+        "log": "",
+    }
+    _INSTALL["job"] = job
+    asyncio.create_task(_guarded_install(body.set, requirements))
+    return dict(job)
+
+
+async def _guarded_install(key: str, requirements: Path) -> None:
+    async with _INSTALL_LOCK:
+        await _run_install(key, requirements)
+
+
+@router.get("/models/prerequisites/status")
+async def prerequisites_status(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    """The running or last install, plus whether each set is satisfied now."""
+    _check(x_admin_token)
+    return {
+        "install": _install_state(),
+        "sets": {
+            key: {
+                "label": spec["label"],
+                "detail": spec["detail"],
+                "file": spec["file"],
+                "command": f'pip install -r {spec["file"]}',
+                "satisfied": not model_catalog.missing_for(key),
+                "missing": model_catalog.missing_for(key),
+            }
+            for key, spec in model_catalog.REQUIREMENT_SETS.items()
+        },
+    }
+
+
 @router.post("/models/download")
 async def download_model(
     body: DownloadRequest, x_admin_token: str | None = Header(default=None)
@@ -388,14 +512,66 @@ async def list_models(x_admin_token: str | None = Header(default=None)) -> dict[
     _check(x_admin_token)
     profile = hardware.cached()
     recs = (profile or {}).get("recommendations", {})
-    downloaded = _downloaded_repos()
     return {
-        "catalog": [
-            {**m, "downloaded": m["repo"] in downloaded} for m in model_catalog.ALL_MODELS
-        ],
+        "catalog": _catalog_view(profile),
         "recommendations": recs,
         "installed_llm": await llm_client.list_models(),
     }
+
+
+def _catalog_view(profile: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The catalog with the per-machine verdicts the panel renders.
+
+    ``ALL_MODELS`` is the raw catalog and carries no ``fits`` / ``blockers`` /
+    ``requirements``, so serving it directly left the panel with nothing to judge
+    by: every Download button was disabled and no "downloaded" badge ever showed.
+    Merge in the scored view from :func:`hardware.recommend`, keyed by repo, and
+    fall back to the raw entry for anything the recommender does not cover.
+    """
+    scored = {m["repo"]: m for m in (hardware.recommend(profile)["models"] if profile else [])}
+    downloaded = _downloaded_repos()
+    active = _active_tts_repo()
+    return [
+        {
+            **m,
+            **scored.get(m["repo"], {}),
+            "downloaded": m["repo"] in downloaded,
+            **_model_state(m, active),
+        }
+        for m in model_catalog.ALL_MODELS
+    ]
+
+
+def _active_tts_repo() -> str:
+    """The speech model the engine currently has loaded.
+
+    The engine is authoritative when it has something loaded; the config is the
+    fallback for the moment before the first load, so the panel can still show
+    which model is *selected* rather than showing nothing as in use.
+    """
+    return engine.status.get("model_id") or config.load().tts.model_id
+
+
+def _model_state(entry: dict[str, Any], active: str) -> dict[str, Any]:
+    """Per-request model state: whether it is in use, and what it needs first."""
+    return {
+        "active": entry.get("repo") == active,
+        "prerequisites": model_catalog.prerequisites(entry),
+    }
+
+
+def _with_model_state(profile: dict[str, Any]) -> dict[str, Any]:
+    """Annotate a scan result's model list in place, then return it.
+
+    The panel renders models from the scan result rather than from ``/models``, so
+    both paths have to carry the same state or the "in use" badge would only ever
+    appear on one of them.
+    """
+    recs = profile.get("recommendations")
+    if isinstance(recs, dict) and recs.get("models"):
+        active = _active_tts_repo()
+        recs["models"] = [{**m, **_model_state(m, active)} for m in recs["models"]]
+    return profile
 
 
 def _downloaded_repos() -> set[str]:
@@ -417,6 +593,16 @@ async def load_tts_model(
 ) -> dict[str, Any]:
     """Load (and if needed download) a TTS model immediately."""
     _check(x_admin_token)
+    entry = model_catalog.by_repo(body.repo)
+    pre = model_catalog.prerequisites(entry or {})
+    if pre["needed"] and not pre["satisfied"]:
+        # Say what is missing and how to fix it, rather than letting the load fail
+        # with a bare ImportError from deep inside the model library.
+        raise HTTPException(
+            409,
+            f"{body.repo} needs the {pre['label']}, which is missing: "
+            f"{', '.join(pre['missing'])}. Install it with: {pre['command']}",
+        )
     try:
         await asyncio.to_thread(engine.ensure_loaded, body.repo)
     except Exception as exc:
