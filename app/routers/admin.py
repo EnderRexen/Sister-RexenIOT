@@ -223,6 +223,118 @@ async def hardware_apply(
     }
 
 
+@router.get("/hardware/plan")
+async def hardware_plan(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    """Verify this machine and propose the settings it suits.
+
+    Reads only: it re-scans, checks every capability the speech engine depends on,
+    and returns the config patch it would apply. Nothing is written, so the panel
+    can show the plan and let the operator decide.
+    """
+    _check(x_admin_token)
+    profile = await asyncio.to_thread(hardware.scan, True)
+    result = await asyncio.to_thread(hardware.plan, profile)
+    result["summary"] = hardware.summary(profile)
+    return result
+
+
+class PlanRunRequest(BaseModel):
+    #: Load the model and synthesise a short phrase before persisting the plan.
+    #: Off by default because it downloads weights on a cold machine.
+    verify: bool = True
+
+
+@router.post("/hardware/plan/run")
+async def hardware_plan_run(
+    body: PlanRunRequest | None = None,
+    x_admin_token: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Apply the verified plan, optionally proving the result works first.
+
+    With ``verify`` (the default) the proposed model is loaded and a short phrase
+    is synthesised *before* anything is written. A plan that cannot actually speak
+    is reported as a failure and the config is left alone -- the same ordering as
+    ``/hardware/apply``, for the same reason: writing first would leave an
+    unloadable model recorded and retried on every start.
+    """
+    _check(x_admin_token)
+    body = body or PlanRunRequest()
+    profile = await asyncio.to_thread(hardware.scan, True)
+    result = await asyncio.to_thread(hardware.plan, profile)
+    patch = result["patch"]
+    target = patch.get("tts", {}).get("model_id")
+
+    measured: dict[str, Any] = {}
+    if body.verify and target:
+        try:
+            measured = await asyncio.to_thread(_verify_speech, target)
+        except Exception as exc:
+            log.warning("Plan verification failed, config left unchanged: %s", exc)
+            return {
+                **result,
+                "applied": {},
+                "error": f"Verification failed for {target}: {exc}",
+                "config": config.public_view(config.load()),
+                "engine": engine.status,
+                "measured": {},
+            }
+
+    try:
+        cfg = config.update(patch)
+    except Exception as exc:
+        # A patch that cannot be validated (a literal outside its set, say) must
+        # not be half-written; config.update is atomic, so just report it.
+        return {
+            **result,
+            "applied": {},
+            "error": f"Could not apply the plan: {exc}",
+            "config": config.public_view(config.load()),
+            "engine": engine.status,
+            "measured": measured,
+        }
+
+    return {
+        **result,
+        "verified": bool(measured),
+        "measured": measured,
+        "applied": patch,
+        "config": config.public_view(cfg),
+        "engine": engine.status,
+    }
+
+
+def _verify_speech(model_id: str) -> dict[str, Any]:
+    """Load ``model_id`` and synthesise a phrase, returning what was measured.
+
+    This is the check the whole step exists for: a machine can report a GPU and a
+    runtime that claims to support it while synthesis still fails. Measuring here
+    means the operator finds out before the config is changed, and gets a real
+    number -- seconds per phrase -- instead of an assurance.
+    """
+    started = time.time()
+    engine.ensure_loaded(model_id)
+    load_s = time.time() - started
+
+    cfg = config.load()
+    phrase = "All systems are online."
+    started = time.time()
+    wav = engine.wav_bytes(phrase, voice=cfg.tts.voice, use_cache=False)
+    synth_s = time.time() - started
+
+    status = engine.status
+    return {
+        "model_id": model_id,
+        "load_seconds": round(load_s, 2),
+        "synth_seconds": round(synth_s, 2),
+        "audio_bytes": len(wav),
+        "device": status.get("device"),
+        "backend": status.get("backend"),
+        "tier": status.get("tier"),
+        "voice_count": status.get("voice_count"),
+        "phrase": phrase,
+    }
+
+
 @router.get("/hardware/recommend")
 async def hardware_recommend(
     x_admin_token: str | None = Header(default=None),
@@ -352,8 +464,35 @@ async def accelerator(x_admin_token: str | None = Header(default=None)) -> dict[
 
     torch_info = acc.get("torch") or {}
     ort_info = acc.get("onnxruntime") or {}
+    vllm_info = acc.get("vllm") or {}
+    recs = profile.get("recommendations") or {}
 
     hints: list[dict[str, str]] = []
+    # Every hint below is about making a *present* GPU usable. On a machine with
+    # no GPU at all the runtime is already configured correctly, so suggesting a
+    # CUDA reinstall would send the reader chasing a problem they do not have --
+    # and "check the driver" when there is no GPU is simply wrong.
+    if not profile.get("gpu"):
+        return {
+            "gpu_present": False,
+            "gpus": [],
+            "torch": torch_info,
+            "onnxruntime": ort_info,
+            "vllm": vllm_info,
+            "any_gpu_runtime": bool(acc.get("any_gpu_runtime")),
+            "driver_only_gpus": acc.get("driver_only_gpus") or [],
+            "gpu_seen_but_unusable": bool(acc.get("gpu_seen_but_unusable")),
+            "recommended_device": recs.get("recommended_device"),
+            "device_usable": recs.get("device_usable"),
+            "device_reason": recs.get("device_reason"),
+            "recommended_backend": recs.get("recommended_backend"),
+            "backend_usable": recs.get("backend_usable"),
+            "backend_reason": recs.get("backend_reason"),
+            "active_tier": tier,
+            "hints": [],
+            "current": engine.status,
+        }
+
     if not torch_info.get("installed"):
         hints.append({
             "for": "full tier (KittenTTS 2, torch)",
@@ -387,8 +526,6 @@ async def accelerator(x_admin_token: str | None = Header(default=None)) -> dict[
 
     # vLLM is only worth suggesting when the full tier is the one in play and
     # there is a GPU to run it on; otherwise it is noise.
-    recs = profile.get("recommendations") or {}
-    vllm_info = acc.get("vllm") or {}
     if tier == "full" and not vllm_info.get("installed") and torch_info.get("cuda"):
         hints.append({
             "for": "full tier, faster synthesis (vLLM)",
@@ -406,6 +543,8 @@ async def accelerator(x_admin_token: str | None = Header(default=None)) -> dict[
         "onnxruntime": ort_info,
         "vllm": vllm_info,
         "any_gpu_runtime": bool(acc.get("any_gpu_runtime")),
+        "driver_only_gpus": acc.get("driver_only_gpus") or [],
+        "gpu_seen_but_unusable": bool(acc.get("gpu_seen_but_unusable")),
         "recommended_device": recs.get("recommended_device"),
         "device_usable": recs.get("device_usable"),
         "device_reason": recs.get("device_reason"),

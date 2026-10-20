@@ -232,6 +232,50 @@ def _windows_gpus() -> list[dict[str, Any]]:
     return out
 
 
+def _nvidia_driver_only() -> dict[str, Any] | None:
+    """Detect an NVIDIA GPU that is present but that no runtime can reach.
+
+    ``nvidia-smi`` is the normal probe, but it is a user-space tool and is often
+    absent from a container even when the host has a GPU and the driver. This
+    looks at the kernel's own view instead, so the panel can distinguish "no GPU
+    in this machine" from "a GPU is here, but nothing can use it yet" -- two
+    situations that need opposite advice.
+
+    Returns ``None`` when there is no evidence of a driver-backed GPU.
+    """
+    version = None
+    try:
+        raw = Path("/proc/driver/nvidia/version").read_text(encoding="utf-8", errors="replace")
+        match = re.search(r"Kernel Module\s+(\S+)", raw)
+        version = match.group(1) if match else raw.strip().splitlines()[0][:80]
+    except Exception:
+        pass
+
+    # The character devices are created by the driver when it binds a GPU.
+    devices = sorted(p.name for p in Path("/dev").glob("nvidia[0-9]*"))
+
+    if not version and not devices:
+        return None
+
+    name = "NVIDIA GPU (driver present)"
+    try:
+        listing = _run(["nvidia-smi", "-L"])
+        if listing:
+            first = listing.splitlines()[0].strip()
+            name = first.split("(")[0].strip() or name
+    except Exception:
+        pass
+
+    return {
+        "vendor": "nvidia",
+        "name": name,
+        "vram_gb": 0.0,
+        "driver": version or "",
+        "driver_only": True,
+        "devices": devices,
+    }
+
+
 def _gpus() -> list[dict[str, Any]]:
     seen: list[dict[str, Any]] = []
     for probe in (_nvidia_gpus, _amd_gpus, _apple_gpu, _windows_gpus):
@@ -239,6 +283,15 @@ def _gpus() -> list[dict[str, Any]]:
             seen.extend(probe())
         except Exception:
             continue
+    # Only fall back to the kernel's view when the normal probes found nothing:
+    # a GPU that nvidia-smi reports is already fully described, with real VRAM.
+    if not seen:
+        try:
+            only = _nvidia_driver_only()
+            if only:
+                seen.append(only)
+        except Exception:
+            pass
     return seen
 
 
@@ -254,7 +307,17 @@ def _runtimes() -> dict[str, Any]:
             found[key] = False
     found["python"] = sys.version.split()[0]
     found["platform"] = f"{platform.system()} {platform.release()}"
+    # The phonemiser is needed to turn text into phonemes. It can come from the
+    # system (espeak-ng on PATH) or from the `espeakng_loader` wheel, which ships
+    # a private copy of the binary. Checking only PATH would report a working
+    # install as broken -- the wheel is the normal case for this app.
     found["espeak"] = bool(shutil.which("espeak-ng") or shutil.which("espeak"))
+    try:
+        __import__("espeakng_loader")
+        found["espeakng_loader"] = True
+    except Exception:
+        found["espeakng_loader"] = False
+    found["phonemiser"] = bool(found["espeak"] or found["espeakng_loader"])
     return found
 
 
@@ -276,6 +339,22 @@ def _accelerators() -> dict[str, Any]:
         import torch  # noqa: PLC0415
 
         cuda = bool(torch.cuda.is_available())
+        # ``cuda`` says a GPU is reachable; the device list and a real allocation
+        # say it can actually run work. Verification asks for the stronger claim,
+        # because a device that enumerates but cannot allocate would otherwise be
+        # reported as usable and then fail at synthesis time.
+        devices: list[str] = []
+        allocatable = False
+        if cuda:
+            try:
+                count = torch.cuda.device_count()
+                devices = [torch.cuda.get_device_name(i) for i in range(count)]
+                if count:
+                    torch.zeros(8, device="cuda")
+                    torch.cuda.synchronize()
+                    allocatable = True
+            except Exception:
+                allocatable = False
         info["torch"] = {
             "installed": True,
             "cuda": cuda,
@@ -283,6 +362,8 @@ def _accelerators() -> dict[str, Any]:
             "cuda_version": getattr(getattr(torch, "version", None), "cuda", None),
             "device_name": torch.cuda.get_device_name(0) if cuda else None,
             "device_count": torch.cuda.device_count() if cuda else 0,
+            "devices": devices,
+            "allocatable": allocatable,
         }
     except Exception:
         pass
@@ -291,15 +372,41 @@ def _accelerators() -> dict[str, Any]:
         import onnxruntime as ort  # noqa: PLC0415
 
         providers = list(ort.get_available_providers())
+        # get_device() reports the device ORT will actually run on -- "CPU" even
+        # when a CUDA provider is listed but no GPU is reachable, which is exactly
+        # the case a provider list alone would misreport.
+        try:
+            device = str(ort.get_device())
+        except Exception:
+            device = "unknown"
         info["onnxruntime"] = {
             "installed": True,
             "providers": providers,
             "cuda": "CUDAExecutionProvider" in providers,
             "rocm": "ROCMExecutionProvider" in providers,
+            "device": device,
             "version": getattr(ort, "__version__", None),
         }
     except Exception:
         pass
+
+    # The ``onnx`` package is not required to run the light tier (onnxruntime
+    # carries its own copy of the format), but its absence is worth reporting
+    # because the GPU requirements file pulls it in and a missing one changes
+    # which requirements file is the right answer.
+    try:
+        import importlib.util as _util  # noqa: PLC0415
+
+        info["onnx"] = {"installed": _util.find_spec("onnx") is not None}
+    except Exception:
+        info["onnx"] = {"installed": False}
+
+    # A driver-backed GPU that neither runtime can reach. Reported separately from
+    # the GPU list so "the machine has no GPU" and "the GPU exists but the
+    # runtimes cannot use it" stay distinguishable.
+    driver_only = [g for g in _gpus() if g.get("driver_only")]
+    info["driver_only_gpus"] = driver_only
+    info["gpu_seen_but_unusable"] = bool(driver_only)
 
     # vLLM is an optional extra of the TTS package. It accelerates the full
     # tier's language model ~3-4x, but only on an NVIDIA GPU, so report whether
@@ -605,9 +712,17 @@ def recommend(profile: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+#: Bumped whenever a probe is added or its shape changes. A cached profile with a
+#: different version is discarded rather than read, because a reader that expects
+#: a key the cache predates reports it as missing -- which looks exactly like a
+#: real finding. That has already caused two false readings of this panel.
+PROFILE_VERSION = 3
+
+
 def scan(persist: bool = True) -> dict[str, Any]:
     """Full hardware scan plus recommendations."""
     profile: dict[str, Any] = {
+        "profile_version": PROFILE_VERSION,
         "scanned_at": time.time(),
         "hostname": platform.node(),
         "cpu": _cpu_info(),
@@ -630,6 +745,337 @@ def scan(persist: bool = True) -> dict[str, Any]:
     return profile
 
 
+def _step(
+    key: str,
+    title: str,
+    *,
+    status: str,
+    detail: str,
+    actionable: bool = False,
+    command: str = "",
+    setting: str = "",
+    value: Any = None,
+) -> dict[str, Any]:
+    """One verification line: what was checked, and what it means."""
+    return {
+        "key": key,
+        "title": title,
+        "status": status,          # ok | warn | fail | info
+        "detail": detail,
+        "actionable": actionable,  # whether the user can do something about it
+        "command": command,
+        "setting": setting,        # the config field this justifies, when any
+        "value": value,            # the value the plan would write for it
+    }
+
+
+def plan(profile: dict[str, Any] | None = None, cfg: Any = None) -> dict[str, Any]:
+    """Verify the machine, and derive the settings that suit it.
+
+    This is the step between scanning and applying. The scan answers "what is in
+    this machine"; the plan answers "what can it actually run, what should be
+    changed, and what would you have to install to go faster". Every claim is
+    backed by a probe rather than an assumption, and every setting the plan
+    proposes is derived from the same fit check that builds the model list, so
+    the two cannot disagree.
+
+    Returns ``{"steps": [...], "patch": {...}, "notes": [...]}`` where ``patch``
+    is a plain config patch the caller may apply. Nothing is written here.
+    """
+    cfg = cfg or config.load()
+    profile = profile or cached() or scan(persist=False)
+    recs = profile.get("recommendations") or recommend(profile)
+    acc = profile.get("accelerators") or {}
+    runtimes = profile.get("runtimes") or {}
+    gpus = profile.get("gpu") or []
+    mem = profile.get("memory") or {}
+    disk = profile.get("disk") or {}
+    cpu = profile.get("cpu") or {}
+
+    torch_info = acc.get("torch") or {}
+    ort_info = acc.get("onnxruntime") or {}
+    vllm_info = acc.get("vllm") or {}
+    steps: list[dict[str, Any]] = []
+    notes: list[str] = []
+
+    real_gpus = [g for g in gpus if not g.get("driver_only")]
+    has_gpu = bool(real_gpus)
+
+    # ---------------------------------------------------------------- processor
+    steps.append(_step(
+        "cpu", "Processor",
+        status="ok",
+        detail=(
+            f"{cpu.get('brand', 'unknown')} — {cpu.get('physical_cores', '?')} cores / "
+            f"{cpu.get('logical_cores', '?')} threads"
+        ),
+    ))
+
+    # ------------------------------------------------------------------- memory
+    total = mem.get("total_gb", 0)
+    avail = mem.get("available_gb", 0)
+    steps.append(_step(
+        "memory", "Memory",
+        status="ok" if total >= 16 else "warn",
+        detail=(
+            f"{total} GB total, {avail} GB free"
+            + ("" if total >= 16 else " — the full speech tier wants 16 GB or more")
+        ),
+    ))
+
+    # -------------------------------------------------------------------- disk
+    free = disk.get("free_gb", 0)
+    steps.append(_step(
+        "disk", "Free disk",
+        status="ok" if free >= 8 else "warn",
+        detail=f"{free} GB free — model weights land in data/models",
+    ))
+
+    # --------------------------------------------------------------------- GPU
+    if has_gpu:
+        names = ", ".join(f"{g.get('name')} ({g.get('vram_gb')} GB)" for g in real_gpus)
+        steps.append(_step(
+            "gpu", "Graphics hardware",
+            status="ok",
+            detail=f"{names} — detected via {', '.join(sorted({g.get('vendor', '?') for g in real_gpus}))}",
+        ))
+    elif acc.get("gpu_seen_but_unusable"):
+        steps.append(_step(
+            "gpu", "Graphics hardware",
+            status="warn",
+            actionable=True,
+            detail=(
+                "An NVIDIA driver is present but no runtime can reach the GPU, so "
+                "everything will run on the CPU. Re-run this app with the GPU passed "
+                "through to the container (--gpus all), or install the driver on the host."
+            ),
+        ))
+    else:
+        steps.append(_step(
+            "gpu", "Graphics hardware",
+            status="info",
+            detail="No GPU detected — the CPU tiers are the right choice and will work.",
+        ))
+
+    # ------------------------------------------------------- ONNX runtime state
+    if not ort_info.get("installed"):
+        steps.append(_step(
+            "onnxruntime", "ONNX runtime",
+            status="warn", actionable=True,
+            command="pip install -r requirements.txt",
+            detail="Not installed — the light tiers (nano / micro / mini) need it.",
+        ))
+    elif ort_info.get("cuda"):
+        steps.append(_step(
+            "onnxruntime", "ONNX runtime",
+            status="ok",
+            detail=(
+                f"{ort_info.get('version')} with CUDAExecutionProvider — "
+                f"the light tiers can use the GPU (running on {ort_info.get('device')})"
+            ),
+        ))
+    else:
+        providers = ", ".join(ort_info.get("providers") or []) or "none"
+        detail = f"{ort_info.get('version')} — CPU only (providers: {providers})"
+        if has_gpu:
+            detail += ". Install requirements-gpu.txt to let the light tiers use the GPU."
+        steps.append(_step(
+            "onnxruntime", "ONNX runtime",
+            status="warn" if has_gpu else "ok",
+            actionable=has_gpu,
+            command="pip install -r requirements-gpu.txt" if has_gpu else "",
+            detail=detail,
+        ))
+
+    # ------------------------------------------------------ torch / full tier
+    if torch_info.get("installed"):
+        if torch_info.get("allocatable"):
+            steps.append(_step(
+                "torch", "PyTorch (full speech tier)",
+                status="ok",
+                detail=(
+                    f"{torch_info.get('version')} — CUDA works and a test tensor "
+                    f"allocated on {torch_info.get('device_name')}"
+                ),
+            ))
+        elif torch_info.get("cuda"):
+            steps.append(_step(
+                "torch", "PyTorch (full speech tier)",
+                status="warn", actionable=True,
+                command="python -c \"import torch; torch.zeros(1, device='cuda')\"",
+                detail=(
+                    f"{torch_info.get('version')} is a CUDA {torch_info.get('cuda_version')} "
+                    "build and reports a GPU, but a test allocation failed — the driver and "
+                    "the CUDA build probably disagree on version."
+                ),
+            ))
+        else:
+            detail = f"{torch_info.get('version')} — CPU only"
+            if torch_info.get("cuda_version"):
+                # The confusing case: a CUDA build with nothing to talk to. Say so
+                # plainly, or the reader assumes the GPU is broken.
+                detail += (
+                    f" (a CUDA {torch_info['cuda_version']} build, but no GPU is "
+                    "reachable from this process)"
+                )
+            steps.append(_step(
+                "torch", "PyTorch (full speech tier)",
+                status="info" if has_gpu else "ok",
+                actionable=has_gpu,
+                command="pip install -r requirements-full.txt --upgrade --force-reinstall" if has_gpu else "",
+                detail=detail,
+            ))
+    else:
+        steps.append(_step(
+            "torch", "PyTorch (full speech tier)",
+            status="info" if has_gpu else "ok",
+            actionable=True,
+            command="pip install -r requirements-full.txt",
+            detail=(
+                "Not installed — the full 1.7B tier needs it. "
+                + ("Install it to use the GPU." if has_gpu else "Only worth it with a GPU.")
+            ),
+        ))
+
+    # ------------------------------------------------------------------- vLLM
+    if vllm_info.get("installed") and torch_info.get("allocatable"):
+        steps.append(_step(
+            "vllm", "vLLM (full tier acceleration)",
+            status="ok",
+            detail=f"{vllm_info.get('version') or 'installed'} — ~3-4x faster synthesis, and usable",
+        ))
+    elif has_gpu and torch_info.get("allocatable"):
+        steps.append(_step(
+            "vllm", "vLLM (full tier acceleration)",
+            status="info", actionable=True,
+            command='pip install "kittenml[vllm]"',
+            detail="A usable GPU is present. Installing vLLM makes full-tier synthesis ~3-4x faster.",
+        ))
+    else:
+        steps.append(_step(
+            "vllm", "vLLM (full tier acceleration)",
+            status="info",
+            detail="Needs a reachable NVIDIA GPU; without one it would not help.",
+        ))
+
+    # ------------------------------------------------------------------- audio
+    # Read the legacy `espeak` flag as a fallback so a profile written before the
+    # bundled wheel was recognised is not read as "no phonemiser" -- absent must
+    # never be mistaken for a real finding.
+    phonemiser = runtimes.get("phonemiser")
+    if phonemiser is None:
+        phonemiser = bool(runtimes.get("espeak"))
+    if phonemiser:
+        source = "espeak-ng on PATH" if runtimes.get("espeak") else "bundled with espeakng_loader"
+        steps.append(_step("espeak", "Phonemiser (espeak-ng)", status="ok",
+                           detail=f"Available ({source}) — required by the speech engine."))
+    else:
+        steps.append(_step(
+            "espeak", "Phonemiser (espeak-ng)",
+            status="warn", actionable=True,
+            command="pip install espeakng_loader   # or: apt install espeak-ng",
+            detail="Neither espeak-ng nor the espeakng_loader wheel is present; the speech engine needs one.",
+        ))
+
+    # ---------------------------------------------------------- chosen settings
+    tier = recs.get("recommended_tts_tier", "mini")
+    device = recs.get("recommended_device", "auto")
+    backend = recs.get("recommended_backend", "torch")
+
+    # Only propose a device when it changes behaviour. When no usable GPU is
+    # present the recommendation is "cpu", but "auto" already resolves to CPU --
+    # so rewriting it would be a no-op that still counts as a config change, and
+    # that has a real cost: the shipped "balanced" profile pins "auto", so a
+    # needless switch to "cpu" would drop it out of effect and leave no profile
+    # shown as active. So keep "cpu" only if it is already set; otherwise settle
+    # on "auto", which runs on CPU now and picks up a GPU once the runtime is
+    # fixed, without a second config change.
+    current_device = (cfg.tts.device or "auto") if hasattr(cfg, "tts") else "auto"
+    if device == "cpu" and current_device != "cpu":
+        device = "auto"
+
+    # The plan and the model list must agree, so take the model the tier implies
+    # from the catalog rather than trusting a second copy of the mapping.
+    chosen = model_catalog.by_tier(tier)
+    patch: dict[str, Any] = {
+        "tts": {
+            "tier": tier,
+            "model_id": recs.get("recommended_tts") or chosen["repo"],
+            "device": device,
+            "backend": backend,
+            "preset": "expressive" if tier == "full" else "stable",
+        }
+    }
+
+    # An LLM is only suggested when none is configured: overwriting a model the
+    # operator chose deliberately would be a surprise, and the recommendation is
+    # a hardware fit, not a judgement about their preference.
+    current_llm = getattr(cfg, "llm", None)
+    if current_llm is not None and not (current_llm.model or "").strip() and recs.get("recommended_llm"):
+        patch["llm"] = {
+            "model": recs["recommended_llm"],
+            # "ollama" is the value hardware_apply uses and the one the local
+            # runtime speaks; the literal set does not accept "openai_compatible".
+            "provider": "ollama",
+            "base_url": current_llm.base_url or "http://localhost:11434",
+        }
+        notes.append(f"No language model is configured; suggesting {recs['recommended_llm']}.")
+
+    changed = _changed_settings(cfg, patch)
+    steps.append(_step(
+        "settings", "Settings to apply",
+        status="ok" if changed else "info",
+        detail=(
+            f"{tier} speech tier on {device}, backend {backend}"
+            + (f" — {len(changed)} setting(s) differ from the current config" if changed
+               else " — already matches the current config, nothing to change")
+        ),
+        setting="tts.tier",
+        value=tier,
+    ))
+
+    # A setting the user has pinned deliberately is worth flagging before it is
+    # overwritten, so an explicit `cuda` on a GPU-less box does not silently
+    # revert without explanation.
+    if current_llm is not None:
+        requested_device = (cfg.tts.device or "auto")
+        if requested_device != device:
+            notes.append(
+                f"tts.device is '{requested_device}' but this machine suits '{device}'."
+            )
+
+    return {
+        "steps": steps,
+        "patch": patch,
+        "notes": notes,
+        "changed": changed,
+        "tier": tier,
+        "device": device,
+        "backend": backend,
+        "verified": False,
+        "summary": summary(profile),
+    }
+
+
+def _changed_settings(cfg: Any, patch: dict[str, Any]) -> list[str]:
+    """Which dotted settings the patch would actually change.
+
+    Reported as dotted paths so the panel can show the difference without
+    reimplementing the comparison, and so an empty list is a real "no change"
+    rather than a guess.
+    """
+    changed: list[str] = []
+    for section, values in patch.items():
+        current = getattr(cfg, section, None)
+        if current is None:
+            continue
+        live = current.model_dump()
+        for key, value in values.items():
+            if live.get(key) != value:
+                changed.append(f"{section}.{key}")
+    return changed
+
+
 def cached(recompute: bool = True) -> dict[str, Any] | None:
     """The last scan, with recommendations re-derived from the live catalog.
 
@@ -637,10 +1083,16 @@ def cached(recompute: bool = True) -> dict[str, Any] | None:
     are a pure function of those facts and the catalog, so they are recomputed on
     every read; otherwise a catalog edit would stay invisible until the user
     happened to rescan, and the panel would recommend models that are not in it.
+
+    A cache written by an older version of this module is treated as absent: the
+    caller rescans instead. Without that, a reader asking for a key the cache
+    predates would report it missing and the panel would show a false finding.
     """
     try:
         if config.HARDWARE_PATH.exists():
             profile = json.loads(config.HARDWARE_PATH.read_text(encoding="utf-8"))
+            if profile.get("profile_version") != PROFILE_VERSION:
+                return None
             if recompute:
                 profile["recommendations"] = recommend(profile)
             return profile

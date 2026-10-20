@@ -228,6 +228,40 @@ html {
 .profile-state .badge { flex: none; }
 .profile-state .muted { margin: 0; }
 
+/* Verification checklist. A row is one capability, marked by status. */
+.verify-state { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
+.verify-steps { display: flex; flex-direction: column; gap: 2px; }
+.verify-step {
+  display: flex;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: var(--bg-2);
+  border-left: 2px solid var(--line-2);
+}
+.verify-step.ok { border-left-color: var(--ok); }
+.verify-step.warn { border-left-color: var(--warn); }
+.verify-step.fail { border-left-color: var(--err); }
+.verify-step.info { border-left-color: var(--line-2); }
+.verify-icon { flex: none; width: 14px; text-align: center; font-family: var(--mono); font-size: 12px; color: var(--fg-faint); }
+.verify-step.ok .verify-icon { color: var(--ok); }
+.verify-step.warn .verify-icon { color: var(--warn); }
+.verify-step.fail .verify-icon { color: var(--err); }
+.verify-body { min-width: 0; flex: 1; }
+.verify-title { font-size: 12.5px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.verify-body .muted { margin: 1px 0 0; font-size: 11.5px; }
+.verify-cmd {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: var(--bg-3);
+  font-size: 11px;
+  user-select: all;
+}
+.verify-diff { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.verify-diff code { background: var(--bg-3); padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+
 .seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 999px; overflow: hidden; }
 .seg-btn { padding: 5px 13px; background: var(--bg-2); border: none; font-size: 11.5px; color: var(--fg-dim); }
 .seg-btn.active { background: var(--accent); color: #1a0a12; }

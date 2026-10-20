@@ -75,6 +75,29 @@
       <div id="hw-notes"></div>
     </div>
 
+    <div class="card" id="verify-card">
+      <div class="card-head">
+        <div>
+          <h3>Verify &amp; apply</h3>
+          <p class="muted">Checks each capability the speech engine depends on, then proposes the
+             settings this machine suits. Applying can prove the result works first, by loading the
+             model and speaking a short phrase before anything is saved.</p>
+        </div>
+        <div class="panel-actions">
+          <button class="btn-ghost" id="btn-verify">Run verification</button>
+          <button class="btn-ghost" id="btn-verify-apply" disabled>Apply verified settings</button>
+          <button class="btn-ghost" id="btn-verify-apply-fast" disabled>Apply without testing</button>
+        </div>
+      </div>
+      <div class="verify-state" id="verify-state" hidden>
+        <span class="badge" id="verify-badge">not run</span>
+        <span class="muted" id="verify-summary"></span>
+      </div>
+      <div id="verify-steps" class="verify-steps"></div>
+      <div id="verify-diff" class="verify-diff" hidden></div>
+      <div id="verify-measured" hidden></div>
+    </div>
+
     <div class="card">
       <div class="card-head">
         <h3>Model catalog</h3>

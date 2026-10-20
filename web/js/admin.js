@@ -15,6 +15,7 @@ const state = {
   profiles: [],
   profileCurrent: {},
   profileActive: "",
+  plan: null,
   modelFilter: "all",
   knownTools: [],
 };
@@ -400,6 +401,161 @@ async function renderAccelerator() {
         : "";
     }
   } catch { /* ignore */ }
+}
+
+/* -------------------------------------------------- hardware verification */
+
+// The verification step: check the machine, show what it means, and let the
+// operator apply the settings it proposes -- optionally proving they work first.
+async function runVerification() {
+  const btn = $("#btn-verify");
+  btn.disabled = true;
+  setSaveState("verifying…", "warn");
+  try {
+    const plan = await api("/admin/hardware/plan");
+    state.plan = plan;
+    renderVerification(plan);
+    setSaveState("verified", "ok");
+    setTimeout(() => setSaveState("idle"), 2500);
+    toast("Verification complete.", "ok");
+  } catch (err) {
+    setSaveState("verification failed", "err");
+    toast(`Verification failed: ${err.message}`, "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderVerification(plan) {
+  const wrap = $("#verify-steps");
+  const badge = $("#verify-badge");
+  const stateBox = $("#verify-state");
+  if (!wrap) return;
+
+  const steps = plan.steps || [];
+  stateBox.hidden = false;
+
+  // The headline is the worst finding, so a warning is never hidden behind an
+  // otherwise reassuring list.
+  const warn = steps.filter((s) => s.status === "warn").length;
+  const fail = steps.filter((s) => s.status === "fail").length;
+  const level = fail ? "bad" : warn ? "warn" : "ok";
+  const label = fail ? `${fail} problem${fail > 1 ? "s" : ""}`
+    : warn ? `${warn} thing${warn > 1 ? "s" : ""} to note`
+    : "all checks passed";
+  badge.className = `badge ${level === "ok" ? "ok" : level === "warn" ? "" : "bad"}`;
+  badge.textContent = label;
+  $("#verify-summary").textContent = plan.summary || "";
+
+  wrap.innerHTML = steps.map((s) => {
+    const icon = s.status === "ok" ? "✓" : s.status === "warn" ? "!" : s.status === "fail" ? "✕" : "·";
+    return `
+      <div class="verify-step ${escapeHtml(s.status)}">
+        <span class="verify-icon">${icon}</span>
+        <div class="verify-body">
+          <div class="verify-title">${escapeHtml(s.title)}
+            ${s.actionable ? '<span class="badge">action needed</span>' : ""}
+          </div>
+          <div class="muted">${escapeHtml(s.detail)}</div>
+          ${s.command ? `<code class="verify-cmd">${escapeHtml(s.command)}</code>` : ""}
+        </div>
+      </div>`;
+  }).join("");
+
+  // Show exactly which settings would change, so "apply" is never a blind write.
+  const diff = $("#verify-diff");
+  const changed = plan.changed || [];
+  if (changed.length) {
+    diff.hidden = false;
+    diff.innerHTML = `
+      <div class="verify-title">Settings that would change</div>
+      <div class="muted">${changed.map((c) => `<code>${escapeHtml(c)}</code>`).join(" ")}</div>
+      ${(plan.notes || []).map((n) => `<div class="muted">${escapeHtml(n)}</div>`).join("")}`;
+  } else {
+    diff.hidden = false;
+    diff.innerHTML = `<div class="muted">Already configured for this machine — nothing to change.</div>
+      ${(plan.notes || []).map((n) => `<div class="muted">${escapeHtml(n)}</div>`).join("")}`;
+  }
+
+  $("#btn-verify-apply").disabled = changed.length === 0;
+  $("#btn-verify-apply-fast").disabled = changed.length === 0;
+  $("#btn-verify-apply-fast").hidden = false;
+}
+
+async function applyPlan(verify) {
+  const label = verify ? "Apply verified settings" : "Apply without testing";
+  if (!confirm(`${label}?\n\n${verify
+    ? "The model will be loaded and a test phrase spoken before anything is saved."
+    : "Settings are saved immediately, without testing the model first."}`)) return;
+
+  const btns = [$("#btn-verify-apply"), $("#btn-verify-apply-fast")];
+  btns.forEach((b) => { b.disabled = true; });
+  setSaveState(verify ? "testing model…" : "applying…", "warn");
+  try {
+    const res = await api("/admin/hardware/plan/run", {
+      method: "POST",
+      body: JSON.stringify({ verify }),
+    });
+    if (res.error) {
+      // The plan was fine but the model could not run, so nothing was written.
+      setSaveState("failed", "err");
+      toast(res.error, "err");
+      renderMeasured(null, res.error);
+      return;
+    }
+    fillConfigForm(res.config);
+    setSaveState("applied", "ok");
+    toast(`Applied: ${res.summary || "settings updated"}`, "ok");
+    renderMeasured(res.measured, null);
+    renderTtsStatus();
+    renderAccelerator();
+    // Re-verify so the checklist reflects the config that is now live.
+    await runVerification();
+  } catch (err) {
+    setSaveState("apply failed", "err");
+    toast(`Could not apply: ${err.message}`, "err");
+  } finally {
+    btns.forEach((b) => { b.disabled = false; });
+  }
+}
+
+// What the test run actually measured. Only shown when a test ran, because an
+// unmeasured claim is the thing this panel exists to avoid.
+function renderMeasured(measured, error) {
+  const box = $("#verify-measured");
+  if (!box) return;
+  if (error) {
+    box.hidden = false;
+    box.innerHTML = `<div class="verify-step fail"><span class="verify-icon">✕</span>
+      <div class="verify-body"><div class="verify-title">Test failed</div>
+      <div class="muted">${escapeHtml(error)}</div></div></div>`;
+    return;
+  }
+  if (!measured || !measured.model_id) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  box.hidden = false;
+  const rows = {
+    "Model": measured.model_id,
+    "Loaded in": `${measured.load_seconds}s`,
+    "Test phrase spoken in": `${measured.synth_seconds}s`,
+    "Device used": measured.device || "—",
+    "Backend": measured.backend || "—",
+    "Voices": measured.voice_count ?? "—",
+    "Audio produced": `${Math.round((measured.audio_bytes || 0) / 1024)} KB`,
+  };
+  box.innerHTML = `
+    <div class="verify-step ok">
+      <span class="verify-icon">✓</span>
+      <div class="verify-body">
+        <div class="verify-title">Tested and working</div>
+        <div class="kv">${Object.entries(rows).map(([k, v]) =>
+          `<div class="kv-row"><span>${escapeHtml(k)}</span><strong>${escapeHtml(String(v))}</strong></div>`
+        ).join("")}</div>
+      </div>
+    </div>`;
 }
 
 async function renderStorageStatus() {
@@ -1009,6 +1165,9 @@ function wireEvents() {
 
   $("#btn-scan").addEventListener("click", () => runScan(false));
   $("#btn-apply-recs").addEventListener("click", applyRecommendations);
+  $("#btn-verify").addEventListener("click", runVerification);
+  $("#btn-verify-apply").addEventListener("click", () => applyPlan(true));
+  $("#btn-verify-apply-fast").addEventListener("click", () => applyPlan(false));
 
   $$("#model-filter .seg-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
