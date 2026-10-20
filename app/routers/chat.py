@@ -342,6 +342,14 @@ async def public_config() -> dict[str, Any]:
             "acknowledgement": cfg.voice_input.acknowledgement,
         },
         "tts_enabled": cfg.tts.enabled,
+        # The HUD needs the engine choice and the nominal voice/speed to drive the
+        # browser fallback. Secrets stay out of this response.
+        "tts": {
+            "enabled": cfg.tts.enabled,
+            "engine": cfg.tts.engine,
+            "voice": cfg.tts.voice,
+            "speed": cfg.tts.speed,
+        },
     }
 
 

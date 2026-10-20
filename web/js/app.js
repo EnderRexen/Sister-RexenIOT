@@ -19,6 +19,10 @@ const state = {
   listening: false,
   speaking: false,
   ttsEnabled: true,
+  ttsModelUsable: true,
+  ttsFallbackNoted: false,
+  speechSource: null,
+  browserSpeaking: null,
   audioCtx: null,
   analyser: null,
   sourceNode: null,
@@ -297,8 +301,64 @@ function addToolChip(tool, ok, preview) {
 
 /* ------------------------------------------------------------ speech (TTS) */
 
+/** True when the browser can synthesise speech on its own. */
+function browserTtsAvailable() {
+  return typeof window.speechSynthesis !== "undefined"
+    && typeof window.SpeechSynthesisUtterance !== "undefined";
+}
+
+/**
+ * Speak through the browser's own engine.
+ *
+ * This is the offline fallback, so it must not depend on the server or on any
+ * of the model assets. It mirrors what the model path does around playback --
+ * same reactor states, same wake-word pause -- or the microphone would hear her
+ * speak and treat it as a command.
+ */
+function speakWithBrowser(text, opts = {}) {
+  if (!browserTtsAvailable()) return false;
+  stopSpeaking();
+  const utter = new SpeechSynthesisUtterance(text);
+  if (opts.speed) utter.rate = Math.max(0.5, Math.min(2, Number(opts.speed)));
+  const chosen = state.config?.tts?.voice || "";
+  const match = window.speechSynthesis.getVoices().find((v) => v.name === chosen);
+  if (match) utter.voice = match;
+  utter.onstart = () => { state.speaking = true; setReactor("speaking"); };
+  utter.onend = utter.onerror = () => {
+    state.speaking = false;
+    state.browserSpeaking = null;
+    setReactor("idle");
+    resumeWakeAfterSpeech();
+  };
+  state.browserSpeaking = utter;
+  pauseWakeForSpeech();
+  window.speechSynthesis.speak(utter);
+  return true;
+}
+
+/** The operator asked for browser speech, or the model cannot run. */
+function shouldUseBrowserTts() {
+  const mode = state.config?.tts?.engine || "model";
+  if (mode === "browser") return true;
+  if (mode === "model") return false;
+  // "auto": prefer the model, fall back when it is not usable.
+  return !state.ttsEnabled || state.ttsModelUsable === false;
+}
+
 async function speak(text, opts = {}) {
   if (state.muted || !state.ttsEnabled || !text.trim()) return;
+
+  if (shouldUseBrowserTts()) {
+    if (speakWithBrowser(text, opts)) {
+      noteSpeechSource("browser");
+      return;
+    }
+    if ((state.config?.tts?.engine || "model") === "browser") {
+      toast("This browser has no speech synthesis.", "err");
+      return;
+    }
+  }
+
   try {
     stopSpeaking();
     const res = await fetch("/api/speak", {
@@ -313,7 +373,7 @@ async function speak(text, opts = {}) {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      toast(body.detail || "Speech failed", "err");
+      fallbackToBrowser(text, opts, body.detail || "Speech failed");
       return;
     }
     const blob = await res.blob();
@@ -337,6 +397,7 @@ async function speak(text, opts = {}) {
       resumeWakeAfterSpeech();
     };
     await audio.play();
+    noteSpeechSource("model");
     clearAudioBlockedHint();
   } catch (err) {
     // Browsers refuse to play audio until the user has interacted with the page.
@@ -346,9 +407,37 @@ async function speak(text, opts = {}) {
       showAudioBlockedHint(text);
       return;
     }
-    resumeWakeAfterSpeech();
-    toast(`Could not play speech: ${err.message}`, "err");
+    fallbackToBrowser(text, opts, err.message);
   }
+}
+
+/**
+ * The model path failed. Speak through the browser rather than leaving silence.
+ *
+ * The reason is surfaced once per session: a toast on every reply would bury the
+ * actual conversation.
+ */
+function fallbackToBrowser(text, opts, reason) {
+  resumeWakeAfterSpeech();
+  if (speakWithBrowser(text, opts)) {
+    noteSpeechSource("browser");
+    if (!state.ttsFallbackNoted) {
+      state.ttsFallbackNoted = true;
+      toast(`Vocal model unavailable (${reason}). Using browser speech.`, "warn");
+    }
+    return;
+  }
+  toast(`Could not play speech: ${reason}`, "err");
+}
+
+/** Show which engine is speaking, so the operator is never guessing. */
+function noteSpeechSource(source) {
+  state.speechSource = source;
+  const el = $("#speech-source");
+  if (!el) return;
+  const label = source === "browser" ? "browser speech" : "vocal model";
+  el.textContent = label;
+  el.dataset.source = source;
 }
 
 function pauseWakeForSpeech() {
@@ -396,6 +485,12 @@ function stopSpeaking() {
     audio.pause();
     audio.currentTime = 0;
     if (audio.src) URL.revokeObjectURL(audio.src);
+  }
+  // Browser utterances outlive the audio element, so cancel them separately or
+  // muting would leave the browser voice talking over the next reply.
+  if (state.browserSpeaking && browserTtsAvailable()) {
+    window.speechSynthesis.cancel();
+    state.browserSpeaking = null;
   }
   state.speaking = false;
   detachAnalyser();
@@ -1049,6 +1144,10 @@ async function refreshStatus() {
   try {
     const s = await api("/status");
     state.ttsEnabled = s.tts?.state !== "disabled";
+    // "auto" mode needs to know whether the vocal model can actually run, not
+    // just whether speech is switched on: a model that failed to load must send
+    // the next reply to the browser rather than to a broken /api/speak.
+    state.ttsModelUsable = !["error", "unavailable"].includes(s.tts?.state);
     $("#s-model").textContent = s.llm?.model || "not set";
     $("#s-tools").textContent = s.tools_enabled ? `${s.tools_enabled ? "on" : "off"}` : "off";
     $("#s-home").textContent = s.tools_enabled ? "ready" : "off";

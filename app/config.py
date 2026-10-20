@@ -83,6 +83,11 @@ class TTSConfig(BaseModel):
     #: Applied to every reply so the delivery matches the chosen persona.
     default_emotion: str = ""
     device: Literal["auto", "cpu", "cuda"] = "auto"
+    #: Which engine produces the voice. "model" always uses KittenTTS (the
+    #: intended default), "browser" always uses the browser's own speech
+    #: synthesis, and "auto" uses the model but falls back to the browser when it
+    #: cannot run, so a machine that cannot host the vocal model still talks.
+    engine: Literal["model", "browser", "auto"] = "model"
     #: Cap per-request synthesis so a runaway reply cannot stall the UI.
     max_chars: int = 1200
     cache_enabled: bool = True

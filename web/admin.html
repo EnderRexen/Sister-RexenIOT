@@ -325,6 +325,13 @@
             <option value="cpu">cpu (force CPU)</option>
           </select>
         </label>
+        <label>Voice engine
+          <select name="tts.engine" data-cfg="tts.engine" id="tts-engine-select">
+            <option value="model">vocal model (KittenTTS)</option>
+            <option value="auto">vocal model, browser if it cannot run</option>
+            <option value="browser">browser speech</option>
+          </select>
+        </label>
         <label class="checkbox"><input type="checkbox" name="tts.enabled" data-cfg="tts.enabled" /> Speech output enabled</label>
         <label class="checkbox"><input type="checkbox" name="tts.cache_enabled" data-cfg="tts.cache_enabled" /> Cache generated audio</label>
       </div>
