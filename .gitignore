@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 data/config.json
 data/personalities.json
+data/voice_profiles.json
 data/skills.json
 data/hardware_profile.json
 data/agent_memory.json

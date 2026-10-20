@@ -42,6 +42,7 @@ SKIP_PATHS = (
     "data/config.json",
     "data/hardware_profile.json",
     "data/personalities.json",
+    "data/voice_profiles.json",
     "data/skills.json",
     "data/agent_memory.json",
     "data/chat_history.jsonl",
