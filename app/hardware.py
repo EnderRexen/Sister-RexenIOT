@@ -269,6 +269,7 @@ def _accelerators() -> dict[str, Any]:
     info: dict[str, Any] = {
         "torch": {"installed": False, "cuda": False, "version": None, "cuda_version": None},
         "onnxruntime": {"installed": False, "providers": [], "cuda": False, "version": None},
+        "vllm": {"installed": False, "cuda": False, "version": None},
     }
 
     try:
@@ -300,7 +301,30 @@ def _accelerators() -> dict[str, Any]:
     except Exception:
         pass
 
-    info["any_gpu_runtime"] = bool(info["torch"]["cuda"] or info["onnxruntime"]["cuda"])
+    # vLLM is an optional extra of the TTS package. It accelerates the full
+    # tier's language model ~3-4x, but only on an NVIDIA GPU, so report whether
+    # it is installed *and* whether it could actually run.
+    try:
+        import importlib.util  # noqa: PLC0415
+
+        if importlib.util.find_spec("vllm") is not None:
+            import importlib.metadata as md  # noqa: PLC0415
+
+            try:
+                version = md.version("vllm")
+            except Exception:
+                version = None
+            info["vllm"] = {
+                "installed": True,
+                "cuda": bool(info["torch"]["cuda"]),
+                "version": version,
+            }
+    except Exception:
+        pass
+
+    info["any_gpu_runtime"] = bool(
+        info["torch"]["cuda"] or info["onnxruntime"]["cuda"] or info["vllm"]["cuda"]
+    )
     return info
 
 
@@ -465,6 +489,55 @@ def _pick_device(profile: dict[str, Any], tier: str) -> dict[str, Any]:
     }
 
 
+def _pick_tts_backend(profile: dict[str, Any], tier: str) -> dict[str, Any]:
+    """Decide what ``tts.backend`` should be, and what it would take to improve.
+
+    vLLM accelerates the full tier's language model ~3-4x, which is the
+    difference between cloning being impractical and interactive. It is
+    GPU-only and a separate install, so this reports the three distinct states:
+    already usable, usable-but-not-installed (with the command), and
+    unavailable. Mirrors ``_pick_device``.
+    """
+    vllm = (profile.get("accelerators") or {}).get("vllm") or {}
+    gpu = profile.get("gpu") or []
+    torch_cuda = bool(((profile.get("accelerators") or {}).get("torch") or {}).get("cuda"))
+
+    # The ONNX tiers have their own backend setting and are already the fast path.
+    if tier != "full":
+        return {
+            "backend": "torch",
+            "usable": False,
+            "reason": f"the {tier} tier runs on ONNX; vLLM only applies to the full tier",
+        }
+    if vllm.get("installed") and torch_cuda:
+        return {
+            "backend": "vllm",
+            "usable": True,
+            "reason": "vLLM is installed and a CUDA GPU is reachable; ~3-4x faster synthesis",
+        }
+    if vllm.get("installed") and not torch_cuda:
+        return {
+            "backend": "torch",
+            "usable": False,
+            "reason": "vLLM is installed but no CUDA GPU is reachable; staying on torch",
+        }
+    if gpu and torch_cuda:
+        return {
+            "backend": "torch",
+            "usable": False,
+            "install": 'pip install "kittenml[vllm]"',
+            "reason": (
+                "GPU detected. Installing vLLM would make full-tier synthesis "
+                "~3-4x faster, which is what makes voice cloning practical."
+            ),
+        }
+    return {
+        "backend": "torch",
+        "usable": False,
+        "reason": "no CUDA GPU; vLLM would not help, torch is correct",
+    }
+
+
 def recommend(profile: dict[str, Any]) -> dict[str, Any]:
     """Build the recommendation payload the admin panel renders."""
     recommendations: list[dict[str, Any]] = []
@@ -510,6 +583,7 @@ def recommend(profile: dict[str, Any]) -> dict[str, Any]:
         best_llm = best_of(cpu_llms) or best_of(llm)
 
     device = _pick_device(profile, tier)
+    backend = _pick_tts_backend(profile, tier)
 
     return {
         "recommended_tts_tier": tier,
@@ -522,6 +596,10 @@ def recommend(profile: dict[str, Any]) -> dict[str, Any]:
         "recommended_device": device["device"],
         "device_usable": device["usable"],
         "device_reason": device["reason"],
+        "recommended_backend": backend["backend"],
+        "backend_usable": backend["usable"],
+        "backend_reason": backend["reason"],
+        "backend_install": backend.get("install"),
         "accelerators": profile.get("accelerators", {}),
         "models": recommendations,
     }

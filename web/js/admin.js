@@ -366,11 +366,22 @@ async function renderAccelerator() {
       "In use now": `${a.current?.device || "—"} (tier ${a.current?.tier || "—"})`,
       "torch": t.installed ? `${t.version}${t.cuda ? ` · CUDA ${t.cuda_version || "yes"}` : " · CPU only"}` : "not installed",
       "onnxruntime": o.installed ? `${o.version}${o.cuda ? " · CUDA available" : " · CPU only"}` : "not installed",
+      "vLLM": (a.vllm?.installed)
+        ? `${a.vllm.version || "installed"}${a.vllm.cuda ? " · CUDA available" : " · no CUDA"}`
+        : "not installed",
       "Recommendation": a.recommended_device || "—",
+      "Speech backend": a.recommended_backend
+        ? `${a.recommended_backend}${a.backend_usable ? " (ready)" : ""}`
+        : "—",
     }).map(([k, v]) => `<div class="kv-row"><span>${escapeHtml(k)}</span><strong>${escapeHtml(String(v ?? "—"))}</strong></div>`).join("");
 
     if (a.device_reason) {
       box.innerHTML += `<p class="muted">${escapeHtml(a.device_reason)}</p>`;
+    }
+    // The backend advice is separate from the device advice: a GPU can be
+    // perfectly usable while the faster backend is still an install away.
+    if (a.backend_reason) {
+      box.innerHTML += `<p class="muted">${escapeHtml(a.backend_reason)}</p>`;
     }
 
     const hints = $("#accelerator-hints");

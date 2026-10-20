@@ -181,6 +181,9 @@ async def hardware_apply(
             "model_id": recs["recommended_tts"],
             "preset": "expressive" if recs["recommended_tts_tier"] == "full" else "stable",
             "device": recs.get("recommended_device", "auto"),
+            # Only adopt vLLM when the scan found it usable; otherwise this is
+            # "torch", which is where it already was.
+            "backend": recs.get("recommended_backend", "torch"),
         }
     }
 
@@ -382,15 +385,33 @@ async def accelerator(x_admin_token: str | None = Header(default=None)) -> dict[
             "note": "Swaps onnxruntime for onnxruntime-gpu, which is the same API.",
         })
 
+    # vLLM is only worth suggesting when the full tier is the one in play and
+    # there is a GPU to run it on; otherwise it is noise.
+    recs = profile.get("recommendations") or {}
+    vllm_info = acc.get("vllm") or {}
+    if tier == "full" and not vllm_info.get("installed") and torch_info.get("cuda"):
+        hints.append({
+            "for": "full tier, faster synthesis (vLLM)",
+            "command": 'pip install "kittenml[vllm]"',
+            "note": (
+                "Upstream measures ~3-4x faster synthesis on a GPU. This is what "
+                "makes voice cloning and the 47-voice set practical."
+            ),
+        })
+
     return {
         "gpu_present": bool(profile.get("gpu")),
         "gpus": profile.get("gpu") or [],
         "torch": torch_info,
         "onnxruntime": ort_info,
+        "vllm": vllm_info,
         "any_gpu_runtime": bool(acc.get("any_gpu_runtime")),
-        "recommended_device": (profile.get("recommendations") or {}).get("recommended_device"),
-        "device_usable": (profile.get("recommendations") or {}).get("device_usable"),
-        "device_reason": (profile.get("recommendations") or {}).get("device_reason"),
+        "recommended_device": recs.get("recommended_device"),
+        "device_usable": recs.get("device_usable"),
+        "device_reason": recs.get("device_reason"),
+        "recommended_backend": recs.get("recommended_backend"),
+        "backend_usable": recs.get("backend_usable"),
+        "backend_reason": recs.get("backend_reason"),
         "active_tier": tier,
         "hints": hints,
         "current": engine.status,
