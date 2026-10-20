@@ -29,6 +29,26 @@ vanilla JS frontend, KittenTTS for speech.
   `collectConfigPatch` in `web/js/admin.js` nests them, so only hand-built calls
   are at risk.
 
+## Voice profiles (T4)
+
+- `app/profiles.py` + `data/voice_profiles.json`. Six built-ins (balanced,
+  best-quality, light-cpu, browser-voice, resilient, silent); custom ones are
+  operator-saved. Voice tab opens on the active profile.
+- **`validate()` exists because `AppConfig` silently drops unknown keys** -- a
+  typo would save with a 200 and do nothing. It rejects unknown sections/keys,
+  bad values, and bad combinations, and returns reasons. It caught `emotion`
+  vs `default_emotion` in my own built-ins.
+- Profiles cover only `tts` + `voice_input`. Allowing `llm`/`tools` would let a
+  "voice" profile rewrite `api_key`/`admin_token`.
+- `matches()` = every key the profile names equals live config. `active()` scans
+  built-ins first.
+- Apply loads the model **before** persisting, like `/hardware/apply`.
+- `/admin/config` takes `{"patch": {...}}`; a bare patch is a 422.
+- **Routes are only `/` and `/admin`** (no `/work`). Admin token is empty by
+  default, so the panel needs no gate.
+- UI rule: "in use" badge only when actually in effect, "selected" otherwise;
+  Apply disabled when nothing to apply; Delete disabled for built-ins.
+
 **Naming:** the project has been rebranded twice ŌĆö first off its original codename,
 then to add the `IOT` suffix. Keep both old forms out of the codebase entirely: no
 identifiers, env vars, log names or filenames. The conventions are
