@@ -12,6 +12,9 @@ const state = {
   editing: null,
   hardware: null,
   voices: [],
+  profiles: [],
+  profileCurrent: {},
+  profileActive: "",
   modelFilter: "all",
   knownTools: [],
 };
@@ -96,6 +99,7 @@ function selectTab(name) {
   $$(".panel").forEach((p) => p.classList.toggle("active", p.dataset.panel === name));
   if (name === "server") refreshStorage();
   if (name === "skills") loadSkills();
+  if (name === "voice") loadProfiles();
 }
 
 /* ---------------------------------------------------- config form binding */
@@ -619,6 +623,179 @@ function populateVoiceSelectors() {
   $("#tts-model-select").innerHTML = tiers.map(([id, label]) => `<option value="${id}">${label}</option>`).join("");
 }
 
+/* ---------------------------------------------------------- voice profiles */
+
+// Only the settings a profile is allowed to carry. Filtering here means a new
+// tts.* control is included automatically, while llm.* and tools.* stay out.
+function collectVoicePatch() {
+  const full = collectConfigPatch();
+  const patch = {};
+  for (const section of ["tts", "voice_input"]) {
+    if (full[section] && Object.keys(full[section]).length) patch[section] = full[section];
+  }
+  return patch;
+}
+
+// A profile is a saved patch of the voice settings. Applying one writes the
+// patch server-side, then the form is refilled so the controls reflect it.
+async function loadProfiles() {
+  try {
+    const data = await api("/admin/profiles");
+    state.profiles = data.profiles || [];
+    state.profileCurrent = data.current || {};
+    state.profileActive = data.active || "";
+    renderProfileSelect();
+  } catch (err) {
+    toast(`Could not load voice profiles: ${err.message}`, "err");
+  }
+}
+
+function renderProfileSelect() {
+  const sel = $("#profile-select");
+  if (!sel) return;
+  const selected = sel.value;
+  const profiles = state.profiles || [];
+  const active = state.profileActive || "";
+  const opts = [`<option value="">(custom — not from a profile)</option>`];
+  for (const p of profiles) {
+    const flag = p.builtin ? "built in" : "saved";
+    // Name the reason it is unusable here, so the option list itself warns
+    // rather than leaving it to the description below.
+    const warn = (p.problems || []).length ? " — cannot apply" : "";
+    const mark = p.id === active ? " ✓ in use" : "";
+    opts.push(`<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${flag})${mark}${warn}</option>`);
+  }
+  sel.innerHTML = opts.join("");
+  // Default to showing the profile actually in effect, so the panel opens on
+  // the truth rather than on an empty selection.
+  sel.value = selected || active || "";
+  updateProfileDescription();
+}
+
+function updateProfileDescription() {
+  const id = $("#profile-select").value;
+  const p = (state.profiles || []).find((x) => x.id === id);
+  const box = $("#profile-description-view");
+  const activeBadge = $("#profile-active-badge");
+  const selectedBadge = $("#profile-selected-badge");
+  const applyBtn = $("#btn-profile-apply");
+  const deleteBtn = $("#btn-profile-delete");
+  if (!box) return;
+
+  const active = state.profileActive || "";
+  const problems = p?.problems || [];
+  const blocked = !p || problems.length > 0;
+  const alreadyInUse = Boolean(p && id === active);
+
+  // Badges state what is true: which profile is actually in effect, and whether
+  // the highlighted one is merely selected.
+  if (activeBadge) {
+    activeBadge.hidden = !alreadyInUse;
+    activeBadge.className = "badge ok";
+  }
+  if (selectedBadge) {
+    selectedBadge.hidden = !p || alreadyInUse;
+  }
+
+  // Apply is pointless when nothing is selected, when it cannot apply, or when
+  // it is already in effect. Delete is only for saved profiles.
+  if (applyBtn) applyBtn.disabled = blocked || alreadyInUse;
+  if (deleteBtn) deleteBtn.disabled = !p || Boolean(p.builtin);
+
+  if (!p) {
+    box.textContent = "The current voice settings do not match any saved profile.";
+    return;
+  }
+  const lines = [];
+  if (p.description) lines.push(p.description);
+  if (problems.length) lines.push(`Cannot apply: ${problems.join("; ")}`);
+  else if (alreadyInUse) lines.push("This profile is in effect.");
+  box.textContent = lines.join(" ");
+}
+
+async function applyProfile() {
+  const id = $("#profile-select").value;
+  const out = $("#profile-result");
+  if (!id) {
+    out.textContent = "Pick a profile first.";
+    return;
+  }
+  out.textContent = "applying…";
+  try {
+    const res = await api(`/admin/profiles/${encodeURIComponent(id)}/apply`, { method: "POST" });
+    state.config = res.config || state.config;
+    await refreshConfig();
+    fillConfigForm(state.config);
+    // Re-read so the "in use" badges reflect what was just applied rather than
+    // what the panel assumed.
+    await loadProfiles();
+    $("#profile-select").value = id;
+    updateProfileDescription();
+    out.textContent = "applied";
+    toast(`Applied ${id}.`, "ok");
+    renderTtsStatus();
+    renderAccelerator();
+  } catch (err) {
+    out.textContent = `failed — ${err.message}`;
+    toast(`Could not apply profile: ${err.message}`, "err");
+  }
+}
+
+async function saveProfile() {
+  const out = $("#profile-result");
+  const name = ($("#profile-name").value || "").trim();
+  if (!name) {
+    out.textContent = "Give the profile a name.";
+    return;
+  }
+  out.textContent = "saving…";
+  try {
+    // Save what the form currently holds, so "save" means the settings the
+    // operator is looking at rather than whatever was last written to disk.
+    const settings = collectVoicePatch();
+    const saved = await api("/admin/profiles", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        description: $("#profile-description").value || "",
+        settings,
+        id: "",
+      }),
+    });
+    await loadProfiles();
+    $("#profile-select").value = saved.id;
+    updateProfileDescription();
+    out.textContent = `saved as ${saved.name}`;
+    toast(`Saved profile "${saved.name}".`, "ok");
+  } catch (err) {
+    out.textContent = `failed — ${err.message}`;
+    toast(`Could not save profile: ${err.message}`, "err");
+  }
+}
+
+async function deleteProfile() {
+  const id = $("#profile-select").value;
+  const out = $("#profile-result");
+  if (!id) {
+    out.textContent = "Pick a saved profile first.";
+    return;
+  }
+  const p = (state.profiles || []).find((x) => x.id === id);
+  if (p?.builtin) {
+    out.textContent = "Built-in profiles cannot be deleted. Save a copy instead.";
+    return;
+  }
+  out.textContent = "deleting…";
+  try {
+    await api(`/admin/profiles/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await loadProfiles();
+    out.textContent = "deleted";
+    toast("Profile deleted.", "ok");
+  } catch (err) {
+    out.textContent = `failed — ${err.message}`;
+  }
+}
+
 /* ------------------------------------------------------------ llm section */
 
 function renderLlmModels(llm) {
@@ -870,6 +1047,11 @@ function wireEvents() {
     } catch (err) { toast(err.message, "err"); }
   });
 
+  $("#profile-select").addEventListener("change", updateProfileDescription);
+  $("#btn-profile-apply").addEventListener("click", applyProfile);
+  $("#btn-profile-save").addEventListener("click", saveProfile);
+  $("#btn-profile-delete").addEventListener("click", deleteProfile);
+
   $("#btn-voice-preview").addEventListener("click", async () => {
     const out = $("#voice-preview-result");
     out.textContent = "generating…";
@@ -975,6 +1157,7 @@ async function boot() {
     loadIntegrations();
     refreshStorage();
     refreshLog();
+    loadProfiles();
   } catch (err) {
     toast(`Admin panel problem: ${err.message}`, "err");
   }

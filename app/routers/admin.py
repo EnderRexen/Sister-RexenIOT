@@ -19,7 +19,7 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from .. import config, hardware, model_catalog, personalities, skills, uploads
+from .. import config, hardware, model_catalog, personalities, profiles, skills, uploads
 from ..llm import client as llm_client
 from ..tools import registry
 from ..tts import engine
@@ -502,6 +502,106 @@ async def test_integration(
             "devices": devices,
         }
     raise HTTPException(400, f"Unknown integration '{target}'")
+
+
+# --------------------------------------------------------------- voice profiles
+
+# Voice profiles bundle the dozen interacting tts.* settings into named choices,
+# so the panel offers "Balanced" / "Best quality" instead of asking the operator
+# to reason about tiers, backends and devices at once. Built-ins cannot be
+# deleted; saving one under the same name creates a copy.
+
+
+class ProfileBody(BaseModel):
+    name: str = ""
+    description: str = ""
+    settings: dict[str, Any] = Field(default_factory=dict)
+    id: str = ""
+
+
+def _profile_view(p: profiles.VoiceProfile, cfg: config.AppConfig | None = None) -> dict[str, Any]:
+    return {
+        **p.model_dump(),
+        "problems": profiles.validate(p.settings),
+        # Whether this profile is the one currently in effect, so the panel can
+        # show it as in use rather than merely selected.
+        "in_use": profiles.matches(p, cfg),
+    }
+
+
+@router.get("/profiles")
+async def get_profiles(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    _check(x_admin_token)
+    cfg = config.load()
+    return {
+        "profiles": [_profile_view(p, cfg) for p in profiles.load()],
+        "active": profiles.active(cfg),
+        "current": profiles.capture(cfg),
+    }
+
+
+@router.post("/profiles")
+async def create_profile(
+    body: ProfileBody, x_admin_token: str | None = Header(default=None)
+) -> dict[str, Any]:
+    _check(x_admin_token)
+    try:
+        saved = profiles.save(body.name, body.settings, body.description, body.id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _profile_view(saved)
+
+
+@router.delete("/profiles/{profile_id}")
+async def delete_profile(
+    profile_id: str, x_admin_token: str | None = Header(default=None)
+) -> dict[str, Any]:
+    _check(x_admin_token)
+    if not profiles.delete(profile_id):
+        raise HTTPException(404, "No such profile, or it is built in.")
+    return {"ok": True}
+
+
+@router.post("/profiles/{profile_id}/apply")
+async def apply_profile(
+    profile_id: str, x_admin_token: str | None = Header(default=None)
+) -> dict[str, Any]:
+    """Adopt a profile's settings, loading the model before persisting it.
+
+    Same ordering as ``/hardware/apply`` and ``put_config``: a profile naming a
+    model that cannot load must not be recorded, or the app retries a broken
+    model on every start with only a log line to show for it.
+    """
+    _check(x_admin_token)
+    profile = profiles.get(profile_id)
+    if profile is None:
+        raise HTTPException(404, "No such profile.")
+
+    problems = profiles.validate(profile.settings)
+    if problems:
+        raise HTTPException(400, "Profile is not valid: " + "; ".join(problems))
+
+    new_model = (profile.settings.get("tts") or {}).get("model_id")
+    if new_model:
+        try:
+            await asyncio.to_thread(engine.ensure_loaded, new_model)
+        except Exception as exc:
+            raise HTTPException(
+                400, f"Could not load TTS model '{new_model}': {exc}"
+            ) from exc
+
+    try:
+        cfg = config.update(profile.settings)
+    except Exception as exc:
+        raise HTTPException(400, f"Invalid configuration: {exc}") from exc
+
+    return {
+        "ok": True,
+        "applied": profile.settings,
+        "profile": profile.id,
+        "config": config.public_view(cfg),
+        "engine": engine.status,
+    }
 
 
 # ------------------------------------------------------------------ personalities

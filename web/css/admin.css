@@ -223,6 +223,11 @@ html {
 .badge.ok { color: var(--ok); background: color-mix(in oklab, var(--ok) 14%, transparent); }
 .badge.bad { color: var(--err); background: color-mix(in oklab, var(--err) 14%, transparent); }
 
+/* The profile state line: badges sit inline with the description text. */
+.profile-state { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin: 2px 0 0; }
+.profile-state .badge { flex: none; }
+.profile-state .muted { margin: 0; }
+
 .seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 999px; overflow: hidden; }
 .seg-btn { padding: 5px 13px; background: var(--bg-2); border: none; font-size: 11.5px; color: var(--fg-dim); }
 .seg-btn.active { background: var(--accent); color: #1a0a12; }
