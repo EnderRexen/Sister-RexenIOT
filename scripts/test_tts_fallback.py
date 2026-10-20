@@ -59,6 +59,31 @@ for value in ("model", "browser", "auto"):
         f"admin.html offers the {value!r} option",
     )
 
+print("\ntts.backend (vLLM acceleration)")
+import importlib  # noqa: E402
+
+tts_cfg = AppConfig.model_fields["tts"].annotation
+backend = tts_cfg.model_fields.get("backend")
+check(backend is not None, "TTSConfig declares a backend field")
+if backend is not None:
+    check(backend.default == "torch", f"backend defaults to torch (got {backend.default!r})")
+    allowed_b = set(getattr(backend.annotation, "__args__", ()))
+    check(allowed_b == {"torch", "vllm"}, f"backend accepts torch/vllm (got {sorted(allowed_b)})")
+check('data-cfg="tts.backend"' in html, "admin.html binds tts.backend")
+
+eng = importlib.import_module("app.tts.engine")
+check(callable(getattr(eng, "_vllm_available", None)), "engine exposes _vllm_available()")
+# Fail closed: on this GPU-less box vLLM must report unavailable, never raise.
+try:
+    available = eng._vllm_available()
+    check(available is False, "vLLM reports unavailable without a GPU")
+except Exception as exc:  # pragma: no cover
+    check(False, f"vLLM check raised instead of failing closed: {exc}")
+
+src = (ROOT / "app" / "tts" / "engine.py").read_text()
+check('backend"] = "vllm"' in src or "kwargs[\"backend\"] = \"vllm\"" in src, "the vLLM backend is passed through")
+check("_is_torch_tier(model_id)" in src, "vLLM is restricted to the torch tier")
+
 print("\npublic config publishes it")
 chat = (ROOT / "app" / "routers" / "chat.py").read_text()
 public = chat.split("def public_config")[1] if "def public_config" in chat else ""

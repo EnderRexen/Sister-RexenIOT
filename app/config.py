@@ -88,6 +88,12 @@ class TTSConfig(BaseModel):
     #: synthesis, and "auto" uses the model but falls back to the browser when it
     #: cannot run, so a machine that cannot host the vocal model still talks.
     engine: Literal["model", "browser", "auto"] = "model"
+    #: Language-model backend for the full tier. "torch" is the default and runs
+    #: on CPU or GPU; "vllm" is an optional GPU-only install (pip install
+    #: "kittenml[vllm]") that upstream measures at ~3-4x faster, and is what makes
+    #: interactive cloning practical. Ignored by the ONNX tiers, which have their
+    #: own backend, and by the torch tiers when CUDA is not reachable.
+    backend: Literal["torch", "vllm"] = "torch"
     #: Cap per-request synthesis so a runaway reply cannot stall the UI.
     max_chars: int = 1200
     cache_enabled: bool = True

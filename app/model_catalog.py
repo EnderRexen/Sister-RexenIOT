@@ -58,7 +58,7 @@ KITTEN_TTS_MODELS: dict[str, dict[str, Any]] = {
         "backend": "torch",
         "voices": 47,
         "requires": {"ram_gb": 8, "cores": 4, "torch": True, "gpu": False},
-        "note": "47 voices, cloning and emotion tags. Needs the torch stack (~2.5 GB).",
+        "note": "47 voices, cloning and emotion tags. Needs the torch stack (~2.5 GB). Set tts.backend=vllm on an NVIDIA GPU for ~3-4x faster synthesis.",
     },
 }
 

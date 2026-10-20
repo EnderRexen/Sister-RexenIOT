@@ -61,6 +61,26 @@ def _is_torch_tier(model_id: str) -> bool:
     return bool(entry and entry.get("backend") == "torch")
 
 
+def _vllm_available() -> bool:
+    """Whether the optional vLLM backend can be used.
+
+    vLLM is a separate install (``kittenml[vllm]``) and only accelerates the
+    language model on an NVIDIA GPU. Importing it is not enough: it needs a
+    working CUDA device, so the check fails closed and the caller falls back to
+    the default torch backend rather than failing the whole load.
+    """
+    try:
+        import importlib.util  # noqa: PLC0415
+
+        if importlib.util.find_spec("vllm") is None:
+            return False
+        import torch  # noqa: PLC0415
+
+        return bool(torch.cuda.is_available())
+    except Exception:  # a broken vLLM install must not break speech
+        return False
+
+
 def _cuda_available(model_id: str) -> bool:
     """Whether the runtime behind ``model_id`` can actually reach a GPU."""
     if _is_torch_tier(model_id):
@@ -153,10 +173,29 @@ class TTSEngine:
         cfg = config.load()
         device, backend = self._resolve_device(cfg.tts.device, model_id)
 
+        # vLLM accelerates the full tier's language model (~3-4x on a GPU) but is
+        # an optional install and GPU-only. Ask for it only when it can actually
+        # run; otherwise the default torch backend is already the right answer.
+        use_vllm = (
+            cfg.tts.backend == "vllm"
+            and _is_torch_tier(model_id)
+            and _vllm_available()
+        )
+        if cfg.tts.backend == "vllm" and not use_vllm:
+            log.warning(
+                "tts.backend=vllm requested but vLLM or CUDA is unavailable; "
+                "using the torch backend"
+            )
+
         self._status = {"state": "loading", "detail": f"loading {model_id} ({device or 'auto'})"}
-        log.info("loading TTS model %s (device=%s, backend=%s)", model_id, device, backend)
+        log.info(
+            "loading TTS model %s (device=%s, backend=%s)",
+            model_id, device, "vllm" if use_vllm else backend,
+        )
         try:
             kwargs: dict[str, Any] = {"cache_dir": str(config.MODELS_DIR)}
+            if use_vllm:
+                kwargs["backend"] = "vllm"
             # The two backends take the target differently: the torch path wants
             # `device`, the ONNX path wants `backend` ("cpu" / "cuda" / "amd_gpu").
             # Passing the wrong one is harmless but useless, so send both only when
