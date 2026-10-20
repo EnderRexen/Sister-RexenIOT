@@ -510,7 +510,10 @@ async def download_model(
 @router.get("/models")
 async def list_models(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     _check(x_admin_token)
-    profile = hardware.cached()
+    # Scan on first call. Without a profile the entries carry no `fits`, so the
+    # panel would disable every Download button -- the same symptom as the raw
+    # catalog, only on a fresh install. The scan is cached after the first call.
+    profile = hardware.cached() or await asyncio.to_thread(hardware.scan, True)
     recs = (profile or {}).get("recommendations", {})
     return {
         "catalog": _catalog_view(profile),
