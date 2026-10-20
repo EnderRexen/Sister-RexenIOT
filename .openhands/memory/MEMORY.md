@@ -3,6 +3,32 @@
 Sister RexenIOT: local-first home-assistant web app, Python FastAPI backend +
 vanilla JS frontend, KittenTTS for speech.
 
+## TTS: KittenTTS tiers, voices, and acceleration
+
+- Tiers are chosen in `app/model_catalog.py` (`KITTEN_TTS_MODELS`), keyed by repo
+  id; `tier_of_repo()` maps a repo back to its tier. Default is the **mini ONNX**
+  tier (`KittenML/kitten-tts-mini-0.8`, 8 voices) -- loads fast, runs anywhere.
+- The **full tier** (`KittenML/kitten-tts-2`, torch) has 47 voices, cloning and
+  emotion tags, but needs the whole torch stack (~2.5 GB, and its CUDA libs are
+  mandatory at import even on CPU -- do not delete them).
+- `tts.engine` = `model` (default) | `browser` | `auto` chooses *voice output*.
+  `model` uses KittenTTS; `browser` uses the Web Speech API; `auto` uses the
+  model and falls back to the browser when it cannot run. See
+  `speakWithBrowser`/`fallbackToBrowser` in `web/js/app.js`.
+- `tts.backend` = `torch` (default) | `vllm` selects the full tier's language
+  model backend. **vLLM is ~3-4x faster on GPU** and ships inside kittenml 0.9.4
+  (`kittentts2/vllm/`), but needs `pip install "kittenml[vllm]"` + CUDA. It is the
+  concrete path to making cloning and 47 voices usable on the target GPU box.
+- Emotion tags in `app/tts/engine.py` `EMOTION_TAGS` match upstream exactly.
+  Upstream also supports inline `<laugh>` events and `(((emphasis)))`, unused here.
+- **`/api/config` must publish any setting the HUD reads.** It once exposed only
+  `tts_enabled`, so `tts.engine` had no effect until `public_config` in
+  `app/routers/chat.py` was extended.
+- `/api/admin/config` takes a **nested** patch (`{"tts": {"engine": "browser"}}`).
+  Dotted keys (`{"tts.engine": ...}`) are silently ignored and still return 200 --
+  `collectConfigPatch` in `web/js/admin.js` nests them, so only hand-built calls
+  are at risk.
+
 **Naming:** the project has been rebranded twice ŌĆö first off its original codename,
 then to add the `IOT` suffix. Keep both old forms out of the codebase entirely: no
 identifiers, env vars, log names or filenames. The conventions are
