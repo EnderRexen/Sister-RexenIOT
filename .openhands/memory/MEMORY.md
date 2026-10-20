@@ -157,6 +157,28 @@ identifiers, env vars, log names or filenames. The conventions are
   edited router keeps serving stale code. Kill the `app.main` PID first, or the
   fix will look like it did not work. Verify with `ps -eo pid,etime,cmd | grep
   app.main` that the process age is seconds, not minutes.
+- **`/tmp` is wiped between runtime recycles.** Dev probes and their logs must
+  live under the repo (`data/`), or they vanish mid-run. A tool call can also be
+  interrupted by an env restart; check `curl /api/status` and restart the stack.
+- **Voice cloning exists only in the full tier (KittenTTS 2), and is not wired.**
+  `kittentts2` exposes `generate(text, reference=wav, reference_text=...)` plus
+  `encode_reference` / `_clone_reference`; the ONNX tiers have no cloning at all.
+  `app/tts/engine.py` never passes `reference=`, so nothing clones today. The
+  engine docstring's "cloning" claim describes the vendor, not our wiring.
+- **Cloning on CPU is not usable here, measured.** Full tier loads in ~29s and
+  exposes 47 voices, but a built-in-voice sentence took **21s** to synthesize,
+  and the clone path OOM-killed the whole environment (app died with it) on a
+  15GB box. Cloning also pulls `openai/whisper-large-v3` (2.9GB) for the
+  reference transcript unless `reference_text` is supplied. Treat cloning as
+  GPU-only, which matches the user's plan to migrate to the RTX 5070.
+- **torch cannot be trimmed: it preloads all 16 CUDA libs with `required=True`**
+  (`torch/__init__.py::_preload_cuda_deps`). Removing `nvidia/*` breaks `import
+  torch` even for CPU-only use. `triton` (897MB) is only an optional torch dep
+  and *can* be removed safely — verified torch, transformers and kittenml import
+  and matmul fine without it.
+- **Browser TTS fallback does not exist yet.** `web/js/app.js::speak()` only
+  POSTs `/api/speak` and toasts on failure; there is no `speechSynthesis` path
+  anywhere in `web/`, so a TTS error means silence, not a fallback.
 - Model catalog `preferred: True` wins over raw score in `hardware.recommend()`.
   Needed because score alone picked Qwen2.5 7B/14B over the newer Qwen3 models
   (`_score` rewards parameters, not recency).
