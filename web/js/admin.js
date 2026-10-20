@@ -289,6 +289,14 @@ async function applyRecommendations() {
   try {
     const result = await api("/admin/hardware/apply", { method: "POST" });
     fillConfigForm(result.config);
+    if (result.error) {
+      // The scan succeeded but the model could not be loaded, so nothing was
+      // written. Say so instead of claiming an apply that did not happen.
+      setSaveState("failed", "err");
+      toast(result.error, "err");
+      renderTtsStatus();
+      return;
+    }
     setSaveState("applied", "ok");
     toast(`Applied: ${result.summary}`, "ok");
     renderTtsStatus();

@@ -139,12 +139,6 @@ class TTSEngine:
                 "tts.device=cuda requested but %s has no usable CUDA; using auto", runtime
             )
             return None, None
-        # auto: claim the GPU when one is actually reachable. Leaving this as
-        # ``None`` looks like "let the library decide", but onnxruntime always
-        # defaults to CPUExecutionProvider unless it is told otherwise, so a
-        # machine with a working CUDA build would still synthesise on the CPU.
-        if _cuda_available(model_id):
-            return "cuda", "cuda"
         return None, None
 
     # ------------------------------------------------------------------- model

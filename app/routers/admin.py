@@ -185,11 +185,25 @@ async def hardware_apply(
             "base_url": current.llm.base_url or "http://localhost:11434",
         }
 
-    cfg = config.update(patch)
+    # Load the speech model *before* persisting the tier it names. Writing first
+    # and loading after would leave a failed download or a missing runtime
+    # recorded in the config, so the app would keep trying to load a model it
+    # cannot run on every subsequent start -- and the only evidence would be a
+    # log line the admin never sees. Persist on success; report the failure
+    # without touching the config otherwise.
     try:
         await asyncio.to_thread(engine.ensure_loaded, recs["recommended_tts"])
     except Exception as exc:
-        log.warning("TTS reload after apply failed: %s", exc)
+        log.warning("TTS load failed during apply, config left unchanged: %s", exc)
+        return {
+            "applied": {},
+            "error": f"Could not load {recs['recommended_tts']}: {exc}",
+            "config": config.public_view(current),
+            "summary": hardware.summary(profile),
+            "engine": engine.status,
+        }
+
+    cfg = config.update(patch)
 
     return {
         "applied": patch,

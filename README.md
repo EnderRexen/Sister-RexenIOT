@@ -132,16 +132,16 @@ the CPU package:
 
 | Value | Behaviour |
 |---|---|
-| `auto` (default) | Uses the GPU when the installed runtime can actually reach one, otherwise CPU |
+| `auto` (default) | Hands the choice to the backend, which picks a GPU when it can reach one |
 | `cpu` | Always CPU |
 | `cuda` | Requires the GPU; falls back to `auto` with a log warning if it is unreachable |
 
-Under `auto` the engine probes the active backend — `torch.cuda.is_available()`
-for the torch tier, `CUDAExecutionProvider` in the provider list for ONNX — and
-passes `cuda` through only when that probe succeeds. The check matters because
-onnxruntime defaults to `CPUExecutionProvider` unless it is told otherwise, so
-"let the library decide" would silently synthesise on the CPU on a machine that
-has a perfectly good GPU.
+Under `auto` the engine passes neither `device` nor `backend` and lets the
+library decide. That is already GPU-aware in both families: the torch loader
+selects `cuda` when `torch.cuda.is_available()`, and the ONNX loader forwards an
+empty provider list, which onnxruntime reads as "use every available provider in
+default precedence" — so installing `onnxruntime-gpu` is enough to get CUDA
+without changing this setting.
 
 Changing it takes effect on the next engine load, or immediately from **Reload
 engine** in the admin panel.
@@ -390,10 +390,8 @@ Set `ADMIN_TOKEN` if the app is reachable by anyone but you — binding to
   install it; the hardware scan tells you when it would be worth it, and
   `requirements-full.txt` installs it when you decide to.
 - GPU speech is opt-in. `requirements-gpu.txt` swaps the CPU ONNX Runtime for the
-  GPU build; see [Running the speech on a GPU](#running-the-speech-on-a-gpu).
-  Once the GPU build is installed, `tts.device=auto` starts using it without
-  further configuration. A GPU the installed runtime cannot reach falls back to
-  CPU rather than failing.
+  GPU build; see [Running the speech on a GPU](#running-the-speech-on-a-gpu). A
+  GPU the installed runtime cannot reach falls back to CPU rather than failing.
 - Emotion tags are early beta in KittenTTS and steer delivery rather than
   guaranteeing it.
 - The task router is keyword-based. It is honest about its confidence, and
