@@ -42,12 +42,31 @@ vanilla JS frontend, KittenTTS for speech.
   whether it resolves. `REQUIREMENT_SETS` maps a **set key** (`full`, `gpu`) to a
   requirements file that ships with the app; the install endpoint accepts only
   those keys, never a package name.
+- **The requirement field has two spellings.** The catalog says `requires`;
+  `hardware.recommend` renames it to `requirements` (see `app/hardware.py`, the
+  scoring loop). `prerequisites()` reads both, because reading only `requires`
+  made the scan path — the list the panel actually renders — report every tier as
+  needing nothing, so the PyTorch install was never offered.
 - `/admin/models/load` refuses with 409 when prerequisites are unmet, naming the
-  missing module and the pip command.
+  missing module and the pip command. Every other load path (warm-up, synthesize,
+  config apply) goes through `TTSEngine._load_hint`, which derives the stack from
+  the **model tier** rather than the error text — a broken install can raise
+  something that never names the module.
+- **A present-but-unimportable package is `broken`, not `missing`.** The fix
+  differs: reinstall (`--force-reinstall`) vs install. Report them separately, or
+  the panel offers the command that will not work.
+- **`importlib.invalidate_caches()` after an install.** `importlib` caches
+  `sys.path` directory listings, so a package installed while the process runs
+  stays invisible until that cache is dropped. The install flow verifies by
+  importing in-process, so `invalidate_probe_cache()` clears both the probe cache
+  and the importlib caches. Symptom if skipped: a flaky test that passes alone and
+  fails in a batch.
 - **Do not judge a capability by `find_spec`.** `onnxruntime` and
   `onnxruntime-gpu` share an import name, so the GPU set looked satisfied on a
   CPU-only box; `missing_for("gpu")` checks `CUDAExecutionProvider` instead. Same
   trap as the phonemiser (bundled wheel, not on `PATH`) and the profile cache.
+  Probe by **importing**, which runs the package's own initialisation — the only
+  honest test — and cache the result briefly (torch alone takes ~1 s).
 - `admin.js` is `<script type="module">`: its functions are **not** global, so UI
   tests must intercept `window.fetch` rather than call `renderModels` directly.
 - **Test against the shipped archive, not the dev tree.** `/admin/models` scans on
@@ -85,6 +104,15 @@ vanilla JS frontend, KittenTTS for speech.
   normal in a container and is not a driver fault -- do not tell the user to check
   `nvidia-smi` when no GPU is present. `/accelerator` returns no hints at all when
   `not profile.get("gpu")`.
+- **The local version tag is a build tag, not a capability.** `+cu130` is compiled
+  in; it says nothing about whether a GPU is reachable. Print it labelled as a
+  build (`2.14.1+cu130 (CUDA 13.0 build) · CPU only`) or the card contradicts
+  itself and reads as a bug in the panel.
+- **RTX 50-series is Blackwell (sm_120) and needs a CUDA 12.8+ wheel.** "Check the
+  driver" is wrong advice there: the driver can be perfect and the wheel still
+  rejects the card. `_nvidia_compute_cap()` reads `compute_capability` off the
+  profile and emits `--index-url https://download.pytorch.org/whl/cu128`. Keep
+  that URL in the hint only — never in the `requirements*.txt` files.
 - `_nvidia_driver_only()` reads `/proc/driver/nvidia/version` and `/dev/nvidia*`
   to distinguish "no GPU" from "GPU the runtimes cannot reach". `torch.cuda` also
   gets a real `torch.zeros(8, device="cuda")` allocation, because
