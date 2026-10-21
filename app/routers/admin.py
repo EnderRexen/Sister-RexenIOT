@@ -372,6 +372,18 @@ _INSTALL_LOG_LIMIT = 4000
 _INSTALL_TIMEOUT = 1800
 
 
+def _nvidia_compute_cap(profile: dict[str, Any]) -> str:
+    """The compute capability of the first NVIDIA GPU, or "".
+
+    Needed to tell a Blackwell card (sm_120, CUDA 12.8+) from an older one, because
+    the advice differs and the version tag alone does not reveal it.
+    """
+    for gpu in profile.get("gpu") or []:
+        if (gpu.get("vendor") or "").lower() == "nvidia":
+            return str(gpu.get("compute_capability") or "")
+    return ""
+
+
 def _install_state() -> dict[str, Any]:
     """A copy of the job, safe to serialise."""
     job = _INSTALL["job"]
@@ -404,6 +416,9 @@ async def _run_install(key: str, requirements: Path) -> None:
             job.update(state="error", finished_at=time.time(),
                        detail=f"pip exited with code {proc.returncode}.")
             return
+        # The probe result is cached; the environment just changed, so the cached
+        # verdict is stale by definition. Drop it before asking again.
+        model_catalog.invalidate_probe_cache()
         missing = model_catalog.missing_for(key)
         if missing:
             # pip can succeed while an import still fails (a partial wheel, or a
@@ -600,11 +615,18 @@ async def load_tts_model(
     pre = model_catalog.prerequisites(entry or {})
     if pre["needed"] and not pre["satisfied"]:
         # Say what is missing and how to fix it, rather than letting the load fail
-        # with a bare ImportError from deep inside the model library.
+        # with a bare ImportError from deep inside the model library. A package
+        # that is present but unimportable needs a reinstall, so say that instead.
+        if pre.get("broken"):
+            what = (
+                f"{', '.join(pre['broken'])} is installed but cannot be imported "
+                f"({pre.get('reason') or 'import failed'})"
+            )
+        else:
+            what = f"the {pre['label']} is missing: {', '.join(pre['missing'])}"
         raise HTTPException(
             409,
-            f"{body.repo} needs the {pre['label']}, which is missing: "
-            f"{', '.join(pre['missing'])}. Install it with: {pre['command']}",
+            f"{body.repo} needs {what}. Fix it with: {pre['command']}",
         )
     try:
         await asyncio.to_thread(engine.ensure_loaded, body.repo)
@@ -692,14 +714,38 @@ async def accelerator(x_admin_token: str | None = Header(default=None)) -> dict[
         # A CUDA build that cannot see a GPU is a driver problem, not an install
         # one, and telling the user to reinstall would send them the wrong way.
         if torch_info.get("cuda_version"):
-            hints.append({
-                "for": "full tier on GPU",
-                "command": "nvidia-smi  # confirm the driver sees the GPU",
-                "note": (
-                    f"torch is a CUDA {torch_info['cuda_version']} build but cannot reach a GPU. "
-                    "Check the NVIDIA driver is installed and the GPU is visible."
-                ),
-            })
+            # An RTX 50-series card is Blackwell (sm_120), which needs a CUDA 12.8+
+            # wheel. A build whose local tag is older, or whose kernels were
+            # compiled for <=12.6, reports the newer runtime version while refusing
+            # the GPU -- so "check the driver" is the wrong advice and sends the
+            # reader to reinstall drivers that are already correct.
+            sm = _nvidia_compute_cap(profile)
+            needs_blackwell = sm.startswith("12.") if sm else False
+            if needs_blackwell:
+                hints.append({
+                    "for": "full tier on GPU (Blackwell / RTX 50-series)",
+                    "command": (
+                        'pip install torch torchaudio --index-url '
+                        "https://download.pytorch.org/whl/cu128"
+                    ),
+                    "note": (
+                        f"This GPU reports compute capability {sm} (Blackwell), which needs a "
+                        "CUDA 12.8 or newer torch build. The version tag alone does not prove "
+                        "that: a build compiled for CUDA 12.6 or older reports the runtime "
+                        "version but rejects sm_120. Check with "
+                        "'python -c \"import torch; print(torch.cuda.get_arch_list())\"' -- "
+                        "sm_120 must be listed."
+                    ),
+                })
+            else:
+                hints.append({
+                    "for": "full tier on GPU",
+                    "command": "nvidia-smi  # confirm the driver sees the GPU",
+                    "note": (
+                        f"torch is a CUDA {torch_info['cuda_version']} build but cannot reach a GPU. "
+                        "Check the NVIDIA driver is installed and the GPU is visible."
+                    ),
+                })
         else:
             hints.append({
                 "for": "full tier on GPU",

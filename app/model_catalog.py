@@ -6,7 +6,9 @@ rather than growing an if-tree per model. ``kind`` groups entries in the admin U
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
+import time
 from typing import Any, Literal
 
 Kind = Literal["tts", "llm", "stt", "embedding"]
@@ -193,12 +195,51 @@ REQUIREMENT_SETS: dict[str, dict[str, Any]] = {
     },
 }
 
-#: The import each requirement set exists to provide. Checked by import rather
-#: than against a pip list, so a partial install is reported as partial.
+#: The import each requirement set exists to provide. Checked by importing, not
+#: against a pip list and not by ``find_spec``: a package can be present on disk
+#: and still fail to import, which is exactly the state a partial or corrupted
+#: install leaves behind (a torch built for one CUDA runtime, say, or a wheel
+#: whose shared library was removed). ``find_spec`` reports that as satisfied, so
+#: the panel offers no fix and the load then fails with "No module named 'torch'".
 _REQUIREMENT_PROBES: dict[str, list[str]] = {
     "full": ["torch", "torchaudio", "transformers", "kittenml"],
     "gpu": ["onnxruntime"],
 }
+
+#: Probes are imports, which are not free (torch alone takes ~1s and the torch
+#: stack several). The result is cached briefly so a panel refresh does not
+#: re-import everything, and invalidated outright after an install.
+_PROBE_CACHE: dict[str, tuple[float, list[str], dict[str, str]]] = {}
+_PROBE_TTL = 30.0
+
+
+def invalidate_probe_cache() -> None:
+    """Forget cached probe results. Called after an install changes the env.
+
+    ``importlib`` caches directory listings of ``sys.path`` entries, so a package
+    installed into ``site-packages`` while this process is running can stay
+    invisible to the import system until that cache is dropped. The install flow
+    verifies by importing in the same process, so clear both.
+    """
+    _PROBE_CACHE.clear()
+    importlib.invalidate_caches()
+
+
+def _probe_import(name: str) -> tuple[bool, str]:
+    """Try to import ``name``. Returns ``(ok, reason)``.
+
+    Importing is the only honest test: it runs the package's own initialisation,
+    which is where a broken binary shows up.
+    """
+    import importlib  # noqa: PLC0415
+
+    try:
+        importlib.import_module(name)
+        return True, ""
+    except ImportError as exc:
+        return False, str(exc) or f"No module named '{name}'"
+    except Exception as exc:  # a binary that loads but crashes still counts
+        return False, f"{type(exc).__name__}: {exc}"
 
 
 def _ort_has_cuda() -> bool:
@@ -216,11 +257,74 @@ def _ort_has_cuda() -> bool:
         return False
 
 
+def probe_details(key: str) -> dict[str, str]:
+    """Why each probe for ``key`` failed, for display. Empty when all pass."""
+    _, failures = _probe_set(key)
+    return failures
+
+
+def _probe_set(key: str) -> tuple[list[str], dict[str, str]]:
+    """``(missing, reasons)`` for a requirement set, cached briefly.
+
+    ``missing`` lists human-readable items that did not import; ``reasons`` maps
+    each to the underlying error so the panel can say "present but broken"
+    rather than only "missing".
+    """
+    if key == "gpu":
+        if _ort_has_cuda():
+            return [], {}
+        try:
+            import onnxruntime  # noqa: PLC0415  # noqa: F401
+
+            # Imported, but without the CUDA provider: the CPU build is installed.
+            return ["onnxruntime-gpu (CUDA build)"], {
+                "onnxruntime-gpu (CUDA build)": (
+                    "onnxruntime imports, but exposes no CUDAExecutionProvider -- "
+                    "this is the CPU build."
+                )
+            }
+        except Exception as exc:
+            return ["onnxruntime"], {"onnxruntime": str(exc) or "not importable"}
+
+    now = time.time()
+    cached = _PROBE_CACHE.get(key)
+    if cached and now - cached[0] < _PROBE_TTL:
+        return list(cached[1]), dict(cached[2])
+
+    missing: list[str] = []
+    reasons: dict[str, str] = {}
+    for name in _REQUIREMENT_PROBES.get(key, []):
+        ok, reason = _probe_import(name)
+        if not ok:
+            missing.append(name)
+            reasons[name] = reason
+    _PROBE_CACHE[key] = (now, list(missing), dict(reasons))
+    return missing, reasons
+
+
 def missing_for(key: str) -> list[str]:
     """What a requirement set still lacks, as human-readable items."""
-    if key == "gpu":
-        return [] if _ort_has_cuda() else ["onnxruntime-gpu (CUDA build)"]
-    return [m for m in _REQUIREMENT_PROBES.get(key, []) if importlib.util.find_spec(m) is None]
+    missing, _ = _probe_set(key)
+    return missing
+
+
+def _is_broken(name: str, reason: str) -> bool:
+    """True when the item is installed but fails to import.
+
+    ``find_spec`` succeeding while the import fails is the signature of a partial
+    install -- the fix is to reinstall, not to install.
+    """
+    try:
+        spec = importlib.util.find_spec(name)
+    except (ImportError, ValueError, AttributeError):
+        # A finder that raises (an unreadable sys.path entry, a namespace package
+        # conflict) is itself evidence of a broken environment. Treat the item as
+        # broken rather than letting the exception escape into the panel.
+        return True
+    if spec is None:
+        return False
+    return "No module named" not in reason
+
 
 
 def prerequisites(entry: dict[str, Any]) -> dict[str, Any]:
@@ -229,15 +333,26 @@ def prerequisites(entry: dict[str, Any]) -> dict[str, Any]:
     The 1.7B tier advertises ``requires.torch``, but nothing acted on it: the
     Download button fetched weights and the load then failed at import. Report the
     set and whether its imports resolve so the panel can offer to install it.
+
+    A package that is present but will not import is reported as broken rather
+    than missing, because the fix differs: one is installed, the other reinstalled.
     """
     requires = entry.get("requires") or {}
     key = "full" if requires.get("torch") else None
     if key is None:
         return {"needed": False, "key": None, "label": "", "detail": "",
-                "satisfied": True, "missing": [], "command": ""}
+                "satisfied": True, "missing": [], "broken": [], "reason": "",
+                "command": ""}
 
-    missing = missing_for(key)
+    missing, reasons = _probe_set(key)
     spec = REQUIREMENT_SETS[key]
+    broken = [m for m in missing if _is_broken(m.split(" ")[0], reasons.get(m, ""))]
+    if broken:
+        reason = reasons.get(broken[0], "")
+        command = f'pip install -r {spec["file"]} --upgrade --force-reinstall'
+    else:
+        reason = ""
+        command = f'pip install -r {spec["file"]}'
     return {
         "needed": True,
         "key": key,
@@ -245,5 +360,7 @@ def prerequisites(entry: dict[str, Any]) -> dict[str, Any]:
         "detail": spec["detail"],
         "satisfied": not missing,
         "missing": missing,
-        "command": f'pip install -r {spec["file"]}',
+        "broken": broken,
+        "reason": reason,
+        "command": command,
     }

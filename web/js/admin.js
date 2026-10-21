@@ -247,6 +247,12 @@ function renderModels(models) {
     // A model whose prerequisites are unmet is downloadable but not runnable, so
     // it must not read as ready. Offer the install instead of a silent dead end.
     const needsSetup = Boolean(pre.needed && !pre.satisfied);
+    // A package that is present but will not import needs reinstalling, not
+    // installing. Saying "missing" there sends the reader to do the wrong thing,
+    // which is how a broken torch stays broken through several attempts.
+    const brokenLabel = (pre.broken || []).length
+      ? `${escapeHtml(pre.broken.join(", "))} is installed but cannot be imported`
+      : `Needs ${escapeHtml(pre.label)}`;
     const primary = needsSetup
       ? `<button class="btn-primary" data-install="${escapeHtml(pre.key)}"
            title="${escapeHtml(pre.detail || "")}">Install ${escapeHtml(pre.label)}</button>`
@@ -267,7 +273,7 @@ function renderModels(models) {
           ${reqBits.length ? `<div class="model-req">Needs ${reqBits.join(", ")} · ${m.size_mb ? m.size_mb + " MB" : ""}</div>` : ""}
           ${blockers ? `<div class="model-block">Blocked: ${blockers}</div>` : ""}
           ${caveats ? `<div class="model-caveat">${caveats}</div>` : ""}
-          ${needsSetup ? `<div class="model-caveat">Needs ${escapeHtml(pre.label)} — ${escapeHtml(pre.detail || "")} ${escapeHtml(pre.command || "")}</div>` : ""}
+          ${needsSetup ? `<div class="model-caveat">${brokenLabel} — ${escapeHtml(pre.detail || "")} ${escapeHtml(pre.reason || "")} ${escapeHtml(pre.command || "")}</div>` : ""}
         </div>
         <div class="model-actions">
           ${primary}
@@ -446,13 +452,21 @@ async function renderAccelerator() {
     const o = a.onnxruntime || {};
     const gpuName = (a.gpus || []).map((g) => `${g.name} (${g.vram_gb} GB)`).join(", ") || "none detected";
 
+    // A version string like "2.14.1+cu130" is the build tag, not evidence the GPU
+    // is reachable -- the local tag is baked in at compile time. Print the two
+    // facts separately or the row reads as a contradiction ("CUDA 13.0 · CPU only").
+    const runtime = (info, buildLabel) => {
+      if (!info.installed) return "not installed";
+      const build = info.cuda_version ? ` (${buildLabel} ${info.cuda_version} build)` : "";
+      return `${info.version}${build} · ${info.cuda ? "GPU reachable" : "CPU only"}`;
+    };
     box.innerHTML = Object.entries({
       "GPU present": a.gpu_present ? gpuName : "no",
       "In use now": `${a.current?.device || "—"} (tier ${a.current?.tier || "—"})`,
-      "torch": t.installed ? `${t.version}${t.cuda ? ` · CUDA ${t.cuda_version || "yes"}` : " · CPU only"}` : "not installed",
-      "onnxruntime": o.installed ? `${o.version}${o.cuda ? " · CUDA available" : " · CPU only"}` : "not installed",
+      "torch": runtime(t, "CUDA"),
+      "onnxruntime": runtime(o, "CUDA"),
       "vLLM": (a.vllm?.installed)
-        ? `${a.vllm.version || "installed"}${a.vllm.cuda ? " · CUDA available" : " · no CUDA"}`
+        ? `${a.vllm.version || "installed"} · ${a.vllm.cuda ? "GPU reachable" : "no GPU"}`
         : "not installed",
       "Recommendation": a.recommended_device || "—",
       "Speech backend": a.recommended_backend

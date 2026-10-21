@@ -209,7 +209,9 @@ class TTSEngine:
             self._model = None
             self._model_id = ""
             self._status = {"state": "error", "detail": f"{type(exc).__name__}: {exc}"}
-            raise TTSError(f"Could not load TTS model {model_id}: {exc}") from exc
+            raise TTSError(
+                f"Could not load TTS model {model_id}: {self._load_hint(exc, model_id)}"
+            ) from exc
 
         voices = list(getattr(model, "available_voices", BASE_VOICES) or BASE_VOICES)
         # Distinguish the two families by capability, not class identity: the
@@ -238,6 +240,44 @@ class TTSEngine:
             "TTS ready: %s (%d voices, %d Hz, device=%s)",
             model_id, len(self._voices), sr, self._device,
         )
+
+    @staticmethod
+    def _load_hint(exc: BaseException, model_id: str = "") -> str:
+        """Turn a load failure into something the reader can act on.
+
+        A bare "No module named 'torch'" names the symptom and not the fix, and it
+        is the message every load path would otherwise surface -- the panel, the
+        chat turn, the config apply. Add the command when the missing piece is one
+        this app knows how to install.
+
+        The tier is the primary signal: a full-tier model can only fail on import
+        for want of the torch stack, and a broken install may raise something that
+        never names the module. The message text is a fallback for the light tiers.
+        """
+        text = f"{type(exc).__name__}: {exc}"
+        blob = f"{exc}".lower()
+        if "no module named" not in blob and "importerror" not in type(exc).__name__.lower():
+            return text
+
+        # Which stack is missing? The full tier needs torch; the light tiers
+        # need onnxruntime. Naming the wrong one sends the reader in circles.
+        if model_id and _is_torch_tier(model_id):
+            return (
+                f"{text}. The PyTorch stack is missing or not importable; install it with "
+                "'python -m pip install -r requirements-full.txt'."
+            )
+        for module, label, req in (
+            ("torch", "PyTorch stack", "requirements-full.txt"),
+            ("torchaudio", "PyTorch stack", "requirements-full.txt"),
+            ("kittenml", "speech package", "requirements.txt"),
+            ("onnxruntime", "ONNX runtime", "requirements.txt"),
+        ):
+            if module in blob:
+                return (
+                    f"{text}. The {label} is missing or not importable; install it with "
+                    f"'python -m pip install -r {req}'."
+                )
+        return text
 
     @staticmethod
     def _effective_device(model: Any, requested: str | None) -> str:
