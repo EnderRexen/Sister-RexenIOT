@@ -336,8 +336,12 @@ def prerequisites(entry: dict[str, Any]) -> dict[str, Any]:
 
     A package that is present but will not import is reported as broken rather
     than missing, because the fix differs: one is installed, the other reinstalled.
+
+    The catalog spells this ``requires``; the scored view from
+    :func:`hardware.recommend` renames it to ``requirements`` for the panel. Read
+    both, or the scan path reports every tier as needing nothing.
     """
-    requires = entry.get("requires") or {}
+    requires = entry.get("requires") or entry.get("requirements") or {}
     key = "full" if requires.get("torch") else None
     if key is None:
         return {"needed": False, "key": None, "label": "", "detail": "",

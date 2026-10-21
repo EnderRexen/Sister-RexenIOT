@@ -62,6 +62,24 @@ async def main():
     dl = [m for m in tts if m["fits"] and not (m["prerequisites"] or {}).get("needed")]
     check("there is at least one plain downloadable tts model", bool(dl), str(len(dl)))
 
+    print("\n=== the scan path carries the same prerequisites as the catalog ===")
+    # The panel renders models from the scan result, not from /models. That path
+    # renames `requires` to `requirements`, so reading only the catalog spelling
+    # made every tier report "needs nothing" and the PyTorch install was never
+    # offered. Compare the two paths on the one entry that does need something.
+    code, scan = post("/api/admin/hardware/scan", {})
+    check("the scan succeeded", code == 200, f"HTTP {code}")
+    scan_tts = [m for m in (scan.get("recommendations") or {}).get("models", [])
+                if m.get("kind") == "tts"]
+    check("the scan returned tts models", len(scan_tts) == 4, f"{len(scan_tts)} rows")
+    cat_needed = {m["repo"]: (m["prerequisites"] or {}).get("needed") for m in tts}
+    scan_needed = {m["repo"]: (m.get("prerequisites") or {}).get("needed") for m in scan_tts}
+    check("both paths agree on which tiers need a requirement set",
+          cat_needed == scan_needed, f"catalog={cat_needed} scan={scan_needed}")
+    check("the 1.7B tier needs the PyTorch stack on both paths",
+          cat_needed.get("KittenML/kitten-tts-2") is True
+          and scan_needed.get("KittenML/kitten-tts-2") is True, str(scan_needed))
+
     print("\n=== the install guard refuses anything but a known set ===")
     for bad_set in ("nope", "requests", "../etc/passwd", "full; rm -rf /"):
         code, body = post("/api/admin/models/prerequisites/install", {"set": bad_set})

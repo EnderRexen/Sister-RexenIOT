@@ -116,6 +116,23 @@ finally:
     for mod in [m for m in sys.modules if m.startswith("rexeniot_probe_")]:
         del sys.modules[mod]
 
+print("\n=== both catalog and scored entry shapes are understood ===")
+# The catalog spells it `requires`; the scored view from hardware.recommend
+# renames it to `requirements`. Reading only one spelling made the scan path
+# report the 1.7B tier as needing nothing, so its Download button never offered
+# the PyTorch install.
+scored_shape = {"repo": "KittenML/kitten-tts-2", "requirements": {"torch": True, "ram_gb": 8}}
+catalog_shape = {"repo": "KittenML/kitten-tts-2", "requires": {"torch": True, "ram_gb": 8}}
+check("the catalog spelling ('requires') is understood",
+      model_catalog.prerequisites(catalog_shape)["needed"] is True)
+check("the scored spelling ('requirements') is understood",
+      model_catalog.prerequisites(scored_shape)["needed"] is True)
+check("both spellings agree on the key",
+      model_catalog.prerequisites(catalog_shape)["key"]
+      == model_catalog.prerequisites(scored_shape)["key"] == "full")
+check("a light tier needs no extra set under either spelling",
+      model_catalog.prerequisites({"requirements": {"torch": False}})["needed"] is False)
+
 print("\n=== a failed load names the fix, not just the symptom ===")
 # This error is what the panel, the chat turn and the config apply all surface,
 # so it has to carry the command rather than a bare "No module named 'torch'".
