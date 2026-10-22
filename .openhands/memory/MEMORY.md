@@ -338,7 +338,8 @@ identifiers, env vars, log names or filenames. The conventions are
   `test_tts_device.py`, `test_apply_rollback.py`, `test_apply_ui.py`,
   `test_config_contract.py`, `test_config_tts_rollback.py`, `test_config_ui_error.py`,
   `test_hardware_plan.py`, `test_hardware_verify_ui.py`, `test_profiles.py`,
-  `test_profiles_ui.py`, `audit_pages.py`, `mobile_measure.py`.
+  `test_profiles_ui.py`, `test_stt_engine.py`, `test_stt_ui.py`,
+  `audit_pages.py`, `mobile_measure.py`.
   All green except `test_attach_ui.py` (see below).
 - **Server-side suites need `PYTHONPATH=.`** or `import app` fails. UI suites take
   the base URL as argv[1] (default `http://127.0.0.1:8060`).
@@ -488,7 +489,11 @@ identifiers, env vars, log names or filenames. The conventions are
   `nohup ./scripts/keep-alive.sh &` if it dies.
 - Only 4 cores / 15.6 GB RAM and no GPU here, so the RTX 5070 + 32 GB target is
   exercised only via `hardware.recommend()` with synthetic profiles.
-- STT is browser-side only (`webkitSpeechRecognition` in `web/js/app.js`); there
-  is no server-side transcription route and no `/api/transcribe`. Voice *input*
-  therefore needs Chrome/Edge and a network; voice *output* (KittenTTS) is local.
+- STT: dictation now runs **server-side by default** (faster-whisper via
+  `POST /api/transcribe`, engine in `app/stt/`); the browser records with
+  MediaRecorder and the audio never leaves the machine. The browser recogniser is
+  still selectable (`voice_input.engine`: `auto`/`server`/`browser`; `auto`
+  prefers the server). `requirements-stt.txt` is installed by the launcher on a
+  normal run (`--stt`, on by default; `REXENIOT_NO_STT=1` to skip). Voice *output*
+  (KittenTTS) is local as before. See the 2026-10-22 log for the PyAV workaround.
 
