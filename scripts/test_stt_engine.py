@@ -17,9 +17,10 @@ sys.path.insert(0, str(ROOT))
 
 import av  # noqa: E402
 import numpy as np  # noqa: E402
+import soundfile as sf  # noqa: E402
 
 from app import config  # noqa: E402
-from app.stt import STTError, available, decode_audio  # noqa: E402
+from app.stt import SAMPLE_RATE, STTError, available, decode_audio  # noqa: E402
 from app.stt import engine as stt  # noqa: E402
 from app.tts import engine as tts  # noqa: E402
 
@@ -34,8 +35,6 @@ def check(label, ok, detail=""):
 
 def to_webm_opus(wav: bytes) -> bytes:
     """Re-encode WAV to Opus/WebM, the way MediaRecorder sends a recording."""
-    import soundfile as sf
-
     audio, sr = sf.read(io.BytesIO(wav), dtype="float32", always_2d=True)
     mono = audio.mean(axis=1)
     pcm16 = np.clip(mono * 32767.0, -32768, 32767).astype(np.int16)
@@ -78,7 +77,12 @@ webm = to_webm_opus(wav)
 
 pcm = decode_audio(wav)
 check("WAV decodes to mono float32", pcm.dtype == np.float32 and pcm.ndim == 1, str(pcm.dtype))
-check("WAV decodes to 16 kHz", abs(len(pcm) / 16000 - 2.6) < 0.5, f"{len(pcm)/16000:.2f}s")
+# Compare against the source's own length, not a fixed number: the TTS output is
+# not byte-identical between runs, so a hardcoded duration makes this flaky.
+info = sf.info(io.BytesIO(wav))
+want = info.frames / info.samplerate * SAMPLE_RATE
+check("WAV decodes at 16 kHz", abs(len(pcm) - want) < SAMPLE_RATE * 0.05,
+      f"{len(pcm)} samples vs {want:.0f} expected ({info.samplerate} Hz source)")
 
 pcm2 = decode_audio(webm)
 # Opus is lossy and the encoder pads, so allow a few milliseconds of slack. The
