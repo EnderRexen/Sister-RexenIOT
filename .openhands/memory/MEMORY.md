@@ -387,3 +387,20 @@ identifiers, env vars, log names or filenames. The conventions are
   (`grid-template-rows` + `translateY`); the "stop" is `.osk-key` entrance
   animation; the click is `:active` scaling. The only AudioContext is the reply
   visualiser, not UI sound.
+
+## Publishing / GitHub (learned the hard way)
+- The `GITHUB_TOKEN` in this sandbox is a **GitHub App installation token**
+  (`ghu_`), not a PAT. It authenticates as `EnderRexen` but **cannot create
+  repositories** (`CreateRepository` denied on both REST and GraphQL), and
+  `GET /user/repos` returns 0. `gh repo create` fails identically. Pushing is
+  blocked too: git falls back to an interactive username prompt, so use
+  `GIT_TERMINAL_PROMPT=0` to fail fast rather than hang.
+- Consequence: an agent session can commit locally but **cannot publish a new
+  repo**. Ask the user to create the empty repo on GitHub first, then push to it.
+- The repo is prepared for that: branch renamed `master` -> `main`, origin set to
+  `https://github.com/EnderRexen/SisterRexenIOT.git`, working tree clean.
+- The GitHub account is **EnderRexen** (Ender Rexen). It is not a code
+  identifier -- nothing in the app references it.
+- Secret scan before publishing: no credentials in tracked files or in the
+  shipped zip. `.gitignore` already excludes `data/config.json` and the other
+  generated state, so those never reach the repo.
