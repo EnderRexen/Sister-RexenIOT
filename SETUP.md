@@ -8,28 +8,26 @@ on a weaker machine — the app detects your hardware and adjusts.
 You do not need to know Python or edit code. Everything is configured through the
 web page.
 
-There are four launchers, one pair per platform:
+There is one launcher per platform:
 
-| File | Use it on | Needs Python installed? |
-|------|-----------|------------------------|
-| `start.cmd` | Windows (double-click this) | Yes |
-| `start.sh` | Linux / macOS | Yes |
-| `start-portable.cmd` | Windows, on a machine with no Python | No |
-| `start-portable.sh` | Linux / macOS, on a machine with no Python | No |
+| File | Use it on |
+|------|-----------|
+| `start.cmd` | Windows (double-click this) |
+| `start.sh` | Linux / macOS |
 
-The two "portable" launchers download a private Python (~30 MB) and keep
+You do not need to install Python first. Each launcher looks for a Python 3.10+
+already on the machine and uses it if there is one; if there is none, it
+downloads a private Python (~30 MB) and uses that instead. Either way it keeps
 everything — runtime, packages, models, settings, chat history — inside the app
-folder. That makes the folder copyable to a USB stick and runnable on a machine
-that has never had Python installed. Use them when the normal launcher stops with
-"Python was not found on PATH", or when you cannot install software on the
-machine. The first run downloads more (~330 MB), and afterwards
-`REXENIOT_OFFLINE=1` runs it with no network at all.
+folder, so the folder can be copied to a USB stick and run on a machine that has
+never had Python installed. The first run downloads more (~330 MB), and
+afterwards `REXENIOT_OFFLINE=1` runs it with no network at all.
 
-All four do the same six things — check Python, create a private environment,
-install dependencies, check configuration, prepare speech, and start the app —
-and all four share one implementation of those steps, `scripts/bootstrap.py`. The
-launcher only finds a Python; the pipeline lives in one file, so the four cannot
-drift apart.
+Both launchers do the same six things — check Python, create a private
+environment, install dependencies, check configuration, prepare speech, and start
+the app — and both share one implementation of those steps,
+`scripts/bootstrap.py`. The launcher only finds a Python; the pipeline lives in
+one file, so the two cannot drift apart.
 
 ---
 
@@ -37,9 +35,10 @@ drift apart.
 
 **Required**
 
-- **Python 3.10 or newer.** Download from <https://www.python.org/downloads/>.
-  During install, **tick "Add python.exe to PATH"** — the launcher looks for
-  Python on the PATH and will stop if it cannot find it.
+- **Python 3.10 or newer is recommended but not required.** If you already have
+  it, download from <https://www.python.org/downloads/> and **tick "Add
+  python.exe to PATH"** during install. If you do not, the launcher downloads a
+  private Python for you on first run (~30 MB).
 - About **3 GB of free disk space** for the app plus a small model, or **~25 GB**
   if you plan to run a large local model.
 
@@ -61,8 +60,8 @@ drift apart.
 
 1. Unzip the folder somewhere you can write to — for example
    `C:\RexenIOT`. Avoid `C:\Program Files`, which blocks writes.
-2. Double-click **`start.cmd`**. If it reports that Python was not found, use
-   **`start-portable.cmd`** instead — it needs no Python.
+2. Double-click **`start.cmd`**. If there is no Python on the machine, it
+   downloads one for you — no separate step needed.
 3. A black window opens and works through six steps. **The first run is slow**
    (roughly 3–10 minutes): it downloads Python packages and then the voice model
    (~80 MB). Later runs skip all of it and start in seconds.

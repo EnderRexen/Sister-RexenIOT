@@ -149,8 +149,8 @@
 
     <div class="card">
       <h3>Storage &amp; portability</h3>
-      <p class="muted">Where RexenIOT keeps her state, and how much room it takes. A portable
-         copy keeps everything here, so the whole folder can be moved to another machine.</p>
+      <p class="muted">Where RexenIOT keeps her state, and how much room it takes. Everything
+         lives in this folder, so the whole folder can be moved to another machine.</p>
       <div class="kv" id="storage-status"></div>
     </div>
   </section>
@@ -671,10 +671,9 @@
          settings. Documentation is included: <code>SETUP.md</code> is the step-by-step
          guide for a new user and <code>README.md</code> is the technical reference.
          Extract it anywhere and run <code>start.cmd</code> (Windows) or
-         <code>./start.sh</code> (Linux / macOS) to install a fresh copy. On a machine
-         with no Python, use <code>start-portable.cmd</code> or
-         <code>./start-portable.sh</code> instead &mdash; they fetch a private runtime
-         and keep all state inside the folder.</p>
+         <code>./start.sh</code> (Linux / macOS) to install a fresh copy. Each
+         launcher finds a Python 3.10+ already on the machine, or fetches a private
+         runtime if there is none, and keeps all state inside the folder.</p>
       <div class="row-actions">
         <a class="btn-primary" href="/download/SisterRexenIOT.zip" download>Download SisterRexenIOT.zip</a>
       </div>

@@ -24,16 +24,17 @@ per-word billing.
 
 **Linux / macOS** — `./start.sh`.
 
-Either launcher checks for Python 3.10+, creates a virtual environment, installs
-what is missing, then starts the app and opens your browser at
-<http://localhost:8060>. The first run downloads the voice model (~80 MB).
+Either launcher looks for a Python 3.10+ already on the machine and uses it if
+there is one; if there is none, it downloads a private Python (~30 MB) and uses
+that. It then creates a virtual environment, installs what is missing, starts the
+app and opens your browser at <http://localhost:8060>. The first run downloads
+the voice model (~80 MB).
 
-On a machine with no Python, use the portable pair instead — `start-portable.cmd`
-or `./start-portable.sh`. They download a private Python (~30 MB) and keep every
-byte of state inside the app folder, so the folder can be copied to a USB stick
-and run anywhere. See [SETUP.md](SETUP.md) for the full comparison.
+Everything — runtime, packages, models, settings, chat history — stays inside the
+app folder, so the folder can be copied to a USB stick and run anywhere. See
+[SETUP.md](SETUP.md) for the full guide.
 
-All four launchers hand off to `scripts/bootstrap.py`, which owns the whole
+Both launchers hand off to `scripts/bootstrap.py`, which owns the whole
 startup pipeline. The launcher's only job is to find a Python, because a machine
 with no Python cannot run the pipeline at all.
 
@@ -351,8 +352,7 @@ each backend's readiness.
 
 ```
 start.cmd / start.sh     launchers: find Python, then hand off to bootstrap.py
-start-portable.cmd / .sh same, but fetch a private Python first (no install needed)
-scripts/bootstrap.py     the shared startup pipeline all four launchers call
+scripts/bootstrap.py     the shared startup pipeline both launchers call
 requirements.txt         runtime dependencies
 app/
   main.py                FastAPI app and static serving

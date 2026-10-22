@@ -8,10 +8,10 @@ mis-parses a file.
 
 The last two checks are about drift rather than syntax. The launchers used to
 carry their own copy of the startup pipeline, and the copies fell out of step:
-the GPU advice was added to start.cmd and start.sh but never reached the portable
-pair, so a portable install on a machine with a discrete GPU was told nothing
-about using it. Those steps now live in scripts/bootstrap.py, and the checks
-below assert that every launcher still delegates to it instead of growing a
+the GPU advice was added to the main launchers but never reached the separate
+portable launchers that once existed, so an install on a machine with a discrete
+GPU was told nothing about using it. Those steps now live in scripts/bootstrap.py, and the checks
+below assert that each launcher still delegates to it instead of growing a
 private copy again.
 
     python scripts/check_launchers.py
@@ -25,9 +25,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-#: The four user-facing entry points. All of them must hand off to bootstrap.py.
-BATCH = ["start.cmd", "start-portable.cmd"]
-SHELL = ["start.sh", "start-portable.sh"]
+#: The two user-facing entry points. Both must hand off to bootstrap.py.
+BATCH = ["start.cmd"]
+SHELL = ["start.sh"]
 
 #: The sandbox's own supervisor, which is not a user entry point: it runs the
 #: server directly rather than through bootstrap, so the delegation checks below
@@ -46,7 +46,7 @@ SHARED_STEPS = [
 #: Content that must never appear in a launcher. Checked separately from
 #: SHARED_STEPS because these are the *effects* of the shared steps: a launcher
 #: could reproduce the advice verbatim without calling any of the functions
-#: above, which is precisely how the portable pair fell behind. `app.main` is
+#: above, which is precisely how the removed portable launchers fell behind. `app.main` is
 #: included because only bootstrap.py may start the server.
 LAUNCHER_FORBIDDEN = [
     (r"pip\s+install", "runs pip; the dependency step belongs in bootstrap.py"),

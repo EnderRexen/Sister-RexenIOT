@@ -1,4 +1,4 @@
-"""The launcher handoff: what the four entry points must and must not contain.
+"""The launcher handoff: what the two entry points must and must not contain.
 
 cmd.exe and bash are not run here -- scripts/check_launchers.py covers the batch
 syntax statically, and these checks cover the contract instead. The contract is
@@ -6,10 +6,11 @@ that every launcher resolves a Python and then hands off to scripts/bootstrap.py
 and that none of them reimplements a step bootstrap owns.
 
 That second half is the part worth testing. The launchers used to carry private
-copies of the pipeline, and the copies drifted: the GPU advice was added to
-start.cmd and start.sh but never reached the portable pair, so a portable install
-on a machine with a discrete GPU was told nothing about using it. The drift was
-invisible because nothing compared the four files.
+copies of the pipeline, and the copies drifted: the GPU advice was added to the
+main launchers but never reached the separate portable launchers that once
+existed, so an install on a machine with a discrete GPU was told nothing about
+using it. The drift was
+invisible because nothing compared the files.
 
     PYTHONPATH=. python scripts/test_launcher_contract.py
 """
@@ -19,8 +20,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-BATCH = ["start.cmd", "start-portable.cmd"]
-SHELL = ["start.sh", "start-portable.sh"]
+BATCH = ["start.cmd"]
+SHELL = ["start.sh"]
 
 FAILS = []
 

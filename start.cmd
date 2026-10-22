@@ -1,70 +1,130 @@
 @echo off
-REM ============================================================================
+REM ==========================================================================
 REM  Sister RexenIOT - Windows launcher
 REM
-REM  Finds a Python 3.10+ interpreter, then hands the rest of the startup to
-REM  scripts\bootstrap.py. Everything after "which Python" -- the virtual
-REM  environment, the dependency check, the GPU note, the speech warm-up and the
-REM  server -- is shared with the other three launchers and lives in that file,
-REM  so this one cannot drift out of step with them.
+REM  Everything lives inside this folder: the Python runtime, the packages,
+REM  the voice models, your settings and your chat history. Copy the folder to
+REM  a USB stick and it runs on any Windows machine with a network connection.
 REM
-REM  Safe to run repeatedly: an existing environment and downloaded models are
-REM  reused.
-REM ============================================================================
+REM  The first run uses a Python 3.10+ already on the machine if there is one,
+REM  and otherwise downloads a standalone runtime (~30 MB), then installs the
+REM  packages (~300 MB). Set REXENIOT_OFFLINE=1 to run with no network
+REM  afterwards.
+REM
+REM  Only the part that obtains a Python is here, because a machine with no
+REM  Python cannot run bootstrap.py at all. The startup pipeline itself is
+REM  scripts\bootstrap.py, shared with the other launcher, so the two cannot
+REM  drift apart.
+REM ==========================================================================
 
 setlocal EnableDelayedExpansion
-title Sister RexenIOT - starting
-
 cd /d "%~dp0"
 
+set "APP_DIR=%CD%"
+set "RUNTIME=%APP_DIR%\runtime"
+set "PYROOT=%RUNTIME%\python"
+set "PY=%PYROOT%\python.exe"
+set "VENV=%RUNTIME%\venv"
+set "VPY=%VENV%\Scripts\python.exe"
+set "MARK=%RUNTIME%\.deps-hash"
 if not defined REXENIOT_PORT set "REXENIOT_PORT=8060"
 
-REM ---------------------------------------------------------------- Python ---
-echo Locating Python...
+REM Keep every byte of state inside the folder.
+set "REXENIOT_HOME=%APP_DIR%"
+set "REXENIOT_PORTABLE=1"
+set "HF_HOME=%APP_DIR%\data\models\hf"
+set "HF_HUB_CACHE=%APP_DIR%\data\models\hf\hub"
+set "XDG_CACHE_HOME=%APP_DIR%\data\cache"
+set "PIP_CACHE_DIR=%RUNTIME%\pip-cache"
 
-set "PYEXE="
-where py >nul 2>nul && set "PYEXE=py -3"
-if not defined PYEXE (
-  where python >nul 2>nul && set "PYEXE=python"
+if not exist "%RUNTIME%" mkdir "%RUNTIME%"
+if not exist "%APP_DIR%\data\models" mkdir "%APP_DIR%\data\models"
+if not exist "%APP_DIR%\data\cache" mkdir "%APP_DIR%\data\cache"
+
+REM ------------------------------------------------------------- runtime ----
+echo Locating a Python runtime...
+
+set "USE_PY="
+
+if exist "%PY%" (
+  set "USE_PY=%PY%"
+  echo       using the bundled runtime
+  goto :have_python
 )
-if not defined PYEXE (
-  echo.
-  echo   ERROR: Python was not found on PATH.
-  echo.
-  echo   Install Python 3.10 or newer from https://www.python.org/downloads/
-  echo   During install, tick "Add python.exe to PATH".
-  echo.
-  echo   Or use start-portable.cmd, which needs no Python at all.
-  echo.
+
+REM Prefer a suitable interpreter already on this machine.
+where py >nul 2>&1
+if %ERRORLEVEL%==0 (
+  py -3 -c "import sys; sys.exit(0 if sys.version_info[:2]>=(3,10) else 1)" >nul 2>&1
+  if !ERRORLEVEL!==0 (
+    for /f "delims=" %%P in ('py -3 -c "import sys;print(sys.executable)"') do set "USE_PY=%%P"
+    echo       using system Python from py launcher
+    goto :have_python
+  )
+)
+where python >nul 2>&1
+if %ERRORLEVEL%==0 (
+  python -c "import sys; sys.exit(0 if sys.version_info[:2]>=(3,10) else 1)" >nul 2>&1
+  if !ERRORLEVEL!==0 (
+    for /f "delims=" %%P in ('python -c "import sys;print(sys.executable)"') do set "USE_PY=%%P"
+    echo       using system Python from PATH
+    goto :have_python
+  )
+)
+
+if "%REXENIOT_OFFLINE%"=="1" (
+  echo   ERROR: no suitable Python found and REXENIOT_OFFLINE=1.
+  echo   Run once with a network connection, or install Python 3.10+.
   pause
   exit /b 1
 )
 
-REM The version floor is enforced here as well as in bootstrap.py, because this is
-REM the first moment a wrong interpreter can be caught, and the message is more
-REM useful than a syntax error from the newer syntax bootstrap.py uses.
-%PYEXE% -c "import sys; sys.exit(0 if sys.version_info[:2] >= (3,10) else 1)" >nul 2>nul
+echo       no suitable Python found; fetching a portable one ^(~30 MB^) ...
+set "TARBALL=cpython-3.12.7+20241016-x86_64-pc-windows-msvc-shared-install_only.tar.gz"
+set "URL=https://github.com/astral-sh/python-build-standalone/releases/download/20241016/%TARBALL%"
+REM Do not name this TMP: that is a Windows built-in pointing at the
+REM user's temp directory, and overwriting it breaks tar, pip and anything
+REM else that needs a temp path. The caret continuation is also gone -- a
+REM trailing space after a caret silently breaks the command.
+set "PYTAR=%RUNTIME%\%TARBALL%"
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '%URL%' -OutFile '%PYTAR%'"
+if not exist "%PYTAR%" (
+  echo   ERROR: could not download Python. Check the network connection.
+  pause
+  exit /b 1
+)
+
+tar -xzf "%PYTAR%" -C "%RUNTIME%"
 if errorlevel 1 (
-  echo.
-  echo   ERROR: Python 3.10 or newer is required.
-  %PYEXE% --version
-  echo   Download a current version from https://www.python.org/downloads/
-  echo.
+  echo   ERROR: could not unpack Python. Windows 10 1803+ is required for tar.
   pause
   exit /b 1
 )
+del "%PYTAR%"
+
+if not exist "%PY%" (
+  echo   ERROR: unexpected archive layout; %PY% is missing.
+  pause
+  exit /b 1
+)
+set "USE_PY=%PY%"
+echo       installed the portable runtime
+
+:have_python
 
 REM ------------------------------------------------------------------ hand ---
-REM bootstrap.py prints the banner and the remaining steps. The port is passed in
-REM so the launcher and the server cannot disagree about it.
-%PYEXE% "scripts\bootstrap.py" ^
-  --venv ".venv" ^
-  --req "requirements.txt" ^
-  --mark ".venv\.req-hash" ^
+REM Steps 2 to 6 are bootstrap.py's: the environment, the packages, the GPU note,
+REM the speech warm-up and the server. It re-prints the banner itself.
+REM REXENIOT_OFFLINE is already exported above, so it needs no flag here.
+"%USE_PY%" "%APP_DIR%\scripts\bootstrap.py" ^
+  --venv "%VENV%" ^
+  --req "%APP_DIR%\requirements.txt" ^
+  --mark "%MARK%" ^
   --port %REXENIOT_PORT% ^
   --host localhost ^
   --bind 127.0.0.1 ^
-  --folder "%CD%"
+  --folder "%APP_DIR%"
 set "CODE=%ERRORLEVEL%"
 
 echo.

@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
-"""The startup pipeline shared by all four launchers.
+"""The startup pipeline shared by both launchers.
 
-Each launcher does the same thing and differs only in how it obtains a Python:
-``start.cmd`` / ``start.sh`` use the system one, the portable pair fetch a
-standalone build. Resolving the interpreter has to stay in the launcher, because
-a machine with no Python cannot run this file at all. Everything after that --
-the virtual environment, the dependency hash, the GPU note, the config check, the
-speech warm-up and the server itself -- is identical everywhere, so it lives here.
+``start.cmd`` and ``start.sh`` do the same thing and differ only in how they
+obtain a Python. Resolving the interpreter has to stay in the launcher, because a
+machine with no Python cannot run this file at all. Everything after that -- the
+virtual environment, the dependency hash, the GPU note, the config check, the
+speech warm-up and the server itself -- is identical on both, so it lives here.
 
 That matters because the logic used to be copied into each launcher and drifted.
-The GPU advice reached ``start.cmd`` and ``start.sh`` but never the portable pair,
-so a portable install on a machine with a discrete GPU was told nothing about how
-to use it. The advice is now read from ``app.hardware``, which the admin panel
-also calls, so there is one copy of the rule instead of three.
+The GPU advice reached the main launchers but never the separate portable
+launchers that used to exist, so an install on a machine with a discrete GPU was
+told nothing about how to use it. The advice is now read from ``app.hardware``, which
+the admin panel also calls, so there is one copy of the rule instead of three.
+
+Every install is self-contained: the venv, the models and the caches all live in
+the app folder, so the folder can be moved or copied to another machine intact.
 
 Phase A runs on the launcher's interpreter and may use only the standard library,
 because no packages are installed yet. It prepares the venv, then re-executes
@@ -34,7 +36,7 @@ MIN_PYTHON = (3, 10)
 
 BANNER = """\
  ==========================================================
-   S I S T E R   R E X E N I O T{portable}
+   S I S T E R   R E X E N I O T
    keeper of the house
  =========================================================="""
 
@@ -88,9 +90,8 @@ def _phase_setup(args: argparse.Namespace) -> int:
     mark = Path(args.mark).resolve()
 
     _say()
-    _say(BANNER.format(portable="   (portable)" if args.portable else ""))
-    if args.portable:
-        _say(f"   folder: {args.folder or venv.parent}")
+    _say(BANNER)
+    _say(f"   folder: {args.folder or venv.parent}")
     _say()
 
     # ------------------------------------------------------------ python ---
@@ -352,10 +353,7 @@ def _phase_run(args: argparse.Namespace) -> int:
     _say(f"   Open:        http://{args.host}:{args.port}/")
     _say(f"   Admin panel: http://{args.host}:{args.port}/admin")
     _say()
-    if args.portable:
-        _say("   Everything is stored inside this folder.")
-    else:
-        _say("   Keep this window open while RexenIOT is running.")
+    _say("   Everything is stored inside this folder.")
     _say("   Press Ctrl+C to stop.")
     _say("  ----------------------------------------------------------")
     _say()
@@ -388,7 +386,6 @@ def main() -> int:
     parser.add_argument("--host", default="localhost", help="host the browser opens")
     parser.add_argument("--bind", default="127.0.0.1", help="address the server binds")
     parser.add_argument("--folder", default="", help="the app folder, for display")
-    parser.add_argument("--portable", action="store_true")
     parser.add_argument(
         "--stt",
         action="store_true",
@@ -414,7 +411,6 @@ def main() -> int:
         "--host", args.host,
         "--bind", args.bind,
         "--folder", args.folder,
-        *( ["--portable"] if args.portable else [] ),
         *( ["--stt"] if args.stt else [] ),
         *( ["--offline"] if args.offline else [] ),
     ]

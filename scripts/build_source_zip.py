@@ -31,7 +31,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "web" / "download" / "SisterRexenIOT.zip"
 
-SKIP_DIRS = {".venv", ".git", "__pycache__", ".openhands", "node_modules", ".mypy_cache"}
+SKIP_DIRS = {".venv", "runtime", ".git", "__pycache__", ".openhands", "node_modules", ".mypy_cache"}
 
 #: Generated state, not source. Prefixes are matched against the relative path.
 SKIP_PATHS = (
