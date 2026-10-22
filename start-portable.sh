@@ -7,9 +7,13 @@
 #  stick and it runs on any Linux or macOS machine with a network connection.
 #
 #  The first run downloads a standalone Python (~30 MB) and the packages
-#  (~300 MB). After that the folder is self-contained: set
-#  REXENIOT_OFFLINE=1 to run with no network at all, provided the voice model
-#  was already fetched.
+#  (~300 MB). After that the folder is self-contained: set REXENIOT_OFFLINE=1 to
+#  run with no network at all, provided the voice model was already fetched.
+#
+#  Only the part that differs from start.sh is here: obtaining a Python the host
+#  may not have. The startup pipeline itself is scripts/bootstrap.py, shared
+#  with the other three launchers, so the two shell entry points cannot drift
+#  apart.
 # ============================================================================
 
 set -u
@@ -21,6 +25,7 @@ RUNTIME="$APP_DIR/runtime"
 PYVER="3.12.7"
 PYROOT="$RUNTIME/python"
 PY="$PYROOT/bin/python3"
+VENV="$RUNTIME/venv"
 MARK="$RUNTIME/.deps-hash"
 PORT="${REXENIOT_PORT:-8060}"
 OFFLINE="${REXENIOT_OFFLINE:-0}"
@@ -34,14 +39,6 @@ export HF_HUB_CACHE="$APP_DIR/data/models/hf/hub"
 export XDG_CACHE_HOME="$APP_DIR/data/cache"
 export PIP_CACHE_DIR="$APP_DIR/runtime/pip-cache"
 export PYTHONDONTWRITEBYTECODE=1
-
-echo
-echo " =========================================================="
-echo "   S I S T E R   R E X E N I O T   (portable)"
-echo "   keeper of the house"
-echo " =========================================================="
-echo "   folder: $APP_DIR"
-echo
 
 mkdir -p "$RUNTIME" "$APP_DIR/data/models" "$APP_DIR/data/cache"
 
@@ -79,7 +76,7 @@ find_system_python() {
 
 USE_PY=""
 
-echo "[1/5] Locating a Python runtime..."
+echo "Locating a Python runtime..."
 
 if [ -x "$PY" ]; then
   USE_PY="$PY"
@@ -132,109 +129,16 @@ else
   fi
 fi
 
-# ------------------------------------------------------------------ venv ----
-echo "[2/5] Preparing the environment..."
-
-VENV="$RUNTIME/venv"
-if [ ! -x "$VENV/bin/python" ]; then
-  "$USE_PY" -m venv "$VENV" 2>/dev/null || {
-    # Standalone builds ship without ensurepip on some platforms.
-    "$USE_PY" -m venv --without-pip "$VENV" 2>/dev/null || true
-  }
-fi
-
-if [ ! -x "$VENV/bin/python" ]; then
-  echo "  ERROR: could not create a virtual environment."
-  echo "  On Debian/Ubuntu: sudo apt install python3-venv"
-  exit 1
-fi
-VPY="$VENV/bin/python"
-
-# ------------------------------------------------------------------ pip -----
-if ! "$VPY" -m pip --version >/dev/null 2>&1; then
-  if [ "$OFFLINE" = "1" ]; then
-    echo "  ERROR: pip is missing from the environment and REXENIOT_OFFLINE=1."
-    exit 1
-  fi
-  echo "      bootstrapping pip ..."
-  "$VPY" -m ensurepip --upgrade >/dev/null 2>&1 || \
-    "$VPY" "$RUNTIME/get-pip.py" >/dev/null 2>&1 || {
-      curl -fsSL https://bootstrap.pypa.io/get-pip.py -o "$RUNTIME/get-pip.py" && \
-      "$VPY" "$RUNTIME/get-pip.py" >/dev/null 2>&1
-    }
-fi
-
-# ------------------------------------------------------------ dependencies --
-echo "[3/5] Checking packages..."
-
-REQ="$APP_DIR/requirements.txt"
-if command -v sha256sum >/dev/null 2>&1; then
-  HASH=$(sha256sum "$REQ" | awk '{print $1}')
-elif command -v shasum >/dev/null 2>&1; then
-  HASH=$(shasum -a 256 "$REQ" | awk '{print $1}')
-else
-  HASH=$(wc -c < "$REQ")
-fi
-
-if [ -f "$MARK" ] && [ "$(cat "$MARK")" = "$HASH" ]; then
-  echo "      packages unchanged, skipping install"
-else
-  if [ "$OFFLINE" = "1" ]; then
-    echo "      ERROR: packages need installing but REXENIOT_OFFLINE=1."
-    exit 1
-  fi
-  echo "      installing packages (~300 MB, one time only) ..."
-  "$VPY" -m pip install --upgrade pip --quiet
-  if ! "$VPY" -m pip install -r "$REQ" --quiet; then
-    echo "  ERROR: package installation failed. Run without --quiet to see why:"
-    echo "      $VPY -m pip install -r $REQ"
-    exit 1
-  fi
-  # kittenml pulls in PyTorch, which the ONNX speech backend never uses.
-  # Skipping its dependencies keeps the folder near 300 MB, not 2.5 GB.
-  echo "      installing the speech package (ONNX only, no PyTorch) ..."
-  if ! "$VPY" -m pip install --no-deps kittenml==0.9.4 --quiet; then
-    echo "  ERROR: could not install the speech package."
-    exit 1
-  fi
-  printf '%s' "$HASH" > "$MARK"
-  echo "      packages ready"
-fi
-
-# --------------------------------------------------------------- verify -----
-echo "[4/5] Verifying the application..."
-
-if ! "$VPY" -c "import app.main; print('      import ok')" 2>&1 | tail -5; then
-  echo
-  echo "  ERROR: the application failed to import."
-  exit 1
-fi
-
-# ------------------------------------------------------------ voice model ---
-if [ "$OFFLINE" != "1" ]; then
-  echo "      the first spoken reply downloads the voice model (~80 MB)"
-else
-  echo "      offline mode: using the voice model already in data/models"
-fi
-
-# ------------------------------------------------------------ voice model ----
-echo "[5/5] Preparing the voice..."
-echo "      the first run downloads the voice model (~80 MB, one time only)"
-echo "      loading it and speaking a test line (this can take a minute) ..."
-if ! "$VPY" -m app.main --prepare-tts; then
-  echo "      NOTE: speech is not ready; the app will still start."
-fi
-
-# ------------------------------------------------------------------ run -----
-echo "Starting Sister RexenIOT..."
-echo
-echo "  ----------------------------------------------------------"
-echo "   Open:        http://localhost:$PORT/"
-echo "   Admin panel: http://localhost:$PORT/admin"
-echo
-echo "   Everything is stored inside this folder."
-echo "   Press Ctrl+C to stop."
-echo "  ----------------------------------------------------------"
-echo
-
-exec "$VPY" -m app.main --host 127.0.0.1 --port "$PORT"
+# -------------------------------------------------------------------- hand ---
+# Steps 2 to 6 are bootstrap.py's: the environment, the packages, the GPU note,
+# the speech warm-up and the server. It re-prints the banner itself.
+# REXENIOT_OFFLINE is already exported above, so it needs no flag here.
+exec "$USE_PY" "$APP_DIR/scripts/bootstrap.py" \
+  --venv "$VENV" \
+  --req "$APP_DIR/requirements.txt" \
+  --mark "$MARK" \
+  --port "$PORT" \
+  --host localhost \
+  --bind 127.0.0.1 \
+  --folder "$APP_DIR" \
+  --portable

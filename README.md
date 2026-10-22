@@ -28,6 +28,15 @@ Either launcher checks for Python 3.10+, creates a virtual environment, installs
 what is missing, then starts the app and opens your browser at
 <http://localhost:8060>. The first run downloads the voice model (~80 MB).
 
+On a machine with no Python, use the portable pair instead — `start-portable.cmd`
+or `./start-portable.sh`. They download a private Python (~30 MB) and keep every
+byte of state inside the app folder, so the folder can be copied to a USB stick
+and run anywhere. See [SETUP.md](SETUP.md) for the full comparison.
+
+All four launchers hand off to `scripts/bootstrap.py`, which owns the whole
+startup pipeline. The launcher's only job is to find a Python, because a machine
+with no Python cannot run the pipeline at all.
+
 Nothing else is required to get a working agent. She starts in *offline mode* —
 she can talk and be spoken to, but has no language model behind her until you
 point her at one.
@@ -331,7 +340,9 @@ each backend's readiness.
 ## Layout
 
 ```
-start.cmd / start.sh     launchers: prerequisite check, install, run
+start.cmd / start.sh     launchers: find Python, then hand off to bootstrap.py
+start-portable.cmd / .sh same, but fetch a private Python first (no install needed)
+scripts/bootstrap.py     the shared startup pipeline all four launchers call
 requirements.txt         runtime dependencies
 app/
   main.py                FastAPI app and static serving

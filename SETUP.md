@@ -8,15 +8,28 @@ on a weaker machine — the app detects your hardware and adjusts.
 You do not need to know Python or edit code. Everything is configured through the
 web page.
 
-There are two launchers:
+There are four launchers, one pair per platform:
 
-| File | Use it on |
-|------|-----------|
-| `start.cmd` | Windows (double-click this) |
-| `start.sh` | Linux / macOS |
+| File | Use it on | Needs Python installed? |
+|------|-----------|------------------------|
+| `start.cmd` | Windows (double-click this) | Yes |
+| `start.sh` | Linux / macOS | Yes |
+| `start-portable.cmd` | Windows, on a machine with no Python | No |
+| `start-portable.sh` | Linux / macOS, on a machine with no Python | No |
 
-Both do the same six things: check Python, create a private environment, install
-dependencies, check configuration, prepare speech, and start the app.
+The two "portable" launchers download a private Python (~30 MB) and keep
+everything — runtime, packages, models, settings, chat history — inside the app
+folder. That makes the folder copyable to a USB stick and runnable on a machine
+that has never had Python installed. Use them when the normal launcher stops with
+"Python was not found on PATH", or when you cannot install software on the
+machine. The first run downloads more (~330 MB), and afterwards
+`REXENIOT_OFFLINE=1` runs it with no network at all.
+
+All four do the same six things — check Python, create a private environment,
+install dependencies, check configuration, prepare speech, and start the app —
+and all four share one implementation of those steps, `scripts/bootstrap.py`. The
+launcher only finds a Python; the pipeline lives in one file, so the four cannot
+drift apart.
 
 ---
 
@@ -48,7 +61,8 @@ dependencies, check configuration, prepare speech, and start the app.
 
 1. Unzip the folder somewhere you can write to — for example
    `C:\RexenIOT`. Avoid `C:\Program Files`, which blocks writes.
-2. Double-click **`start.cmd`**.
+2. Double-click **`start.cmd`**. If it reports that Python was not found, use
+   **`start-portable.cmd`** instead — it needs no Python.
 3. A black window opens and works through six steps. **The first run is slow**
    (roughly 3–10 minutes): it downloads Python packages and then the voice model
    (~80 MB). Later runs skip all of it and start in seconds.

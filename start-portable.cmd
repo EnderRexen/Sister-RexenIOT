@@ -8,6 +8,11 @@ REM  a USB stick and it runs on any Windows machine with a network connection.
 REM
 REM  The first run downloads a standalone Python (~30 MB) and the packages
 REM  (~300 MB). Set REXENIOT_OFFLINE=1 to run with no network afterwards.
+REM
+REM  Only the part that differs from start.cmd is here: obtaining a Python that
+REM  the host may not have. The startup pipeline itself is scripts\bootstrap.py,
+REM  shared with the other three launchers, so the two Windows entry points
+REM  cannot drift apart.
 REM ==========================================================================
 
 setlocal EnableDelayedExpansion
@@ -30,20 +35,12 @@ set "HF_HUB_CACHE=%APP_DIR%\data\models\hf\hub"
 set "XDG_CACHE_HOME=%APP_DIR%\data\cache"
 set "PIP_CACHE_DIR=%RUNTIME%\pip-cache"
 
-echo.
-echo  ==========================================================
-echo    S I S T E R   R E X E N I O T   ^(portable^)
-echo    keeper of the house
-echo  ==========================================================
-echo    folder: %APP_DIR%
-echo.
-
 if not exist "%RUNTIME%" mkdir "%RUNTIME%"
 if not exist "%APP_DIR%\data\models" mkdir "%APP_DIR%\data\models"
 if not exist "%APP_DIR%\data\cache" mkdir "%APP_DIR%\data\cache"
 
 REM ------------------------------------------------------------- runtime ----
-echo [1/5] Locating a Python runtime...
+echo Locating a Python runtime...
 
 set "USE_PY="
 
@@ -114,96 +111,23 @@ echo       installed the portable runtime
 
 :have_python
 
-REM ---------------------------------------------------------------- venv ----
-echo [2/5] Preparing the environment...
-
-if not exist "%VPY%" (
-  "%USE_PY%" -m venv "%VENV%"
-  if errorlevel 1 (
-    echo   ERROR: could not create a virtual environment.
-    pause
-    exit /b 1
-  )
-)
-
-REM ------------------------------------------------------------- packages ---
-echo [3/5] Checking packages...
-
-set "REQ=%APP_DIR%\requirements.txt"
-for /f "skip=1 tokens=* delims=" %%H in ('certutil -hashfile "%REQ%" SHA256') do (
-  if not defined HASH set "HASH=%%H"
-)
-set "HASH=%HASH: =%"
-
-set "NEED_INSTALL=1"
-if exist "%MARK%" (
-  set /p OLDHASH=<"%MARK%"
-  if "!OLDHASH!"=="!HASH!" set "NEED_INSTALL=0"
-)
-
-if "%NEED_INSTALL%"=="1" (
-  if "%REXENIOT_OFFLINE%"=="1" (
-    echo   ERROR: packages need installing but REXENIOT_OFFLINE=1.
-    pause
-    exit /b 1
-  )
-  echo       installing packages ^(~300 MB, one time only^) ...
-  "%VPY%" -m pip install --upgrade pip --quiet
-  "%VPY%" -m pip install -r "%REQ%" --quiet
-  if errorlevel 1 (
-    echo   ERROR: package installation failed. Run this to see why:
-    echo       "%VPY%" -m pip install -r "%REQ%"
-    pause
-    exit /b 1
-  )
-  REM kittenml pulls in PyTorch, which the ONNX speech backend never uses.
-  REM Skipping its dependencies keeps the folder near 300 MB, not 2.5 GB.
-  echo       installing the speech package ^(ONNX only, no PyTorch^) ...
-  "%VPY%" -m pip install --no-deps kittenml==0.9.4 --quiet
-  if errorlevel 1 (
-    echo   ERROR: could not install the speech package.
-    pause
-    exit /b 1
-  )
-  >"%MARK%" echo !HASH!
-  echo       packages ready
-) else (
-  echo       packages unchanged, skipping install
-)
-
-REM --------------------------------------------------------------- verify --
-echo [4/5] Verifying the application...
-"%VPY%" -c "import app.main" 
-if errorlevel 1 (
-  echo.
-  echo   ERROR: the application failed to import.
-  pause
-  exit /b 1
-)
-
-REM ----------------------------------------------------------- voice model -
-echo [5/5] Preparing the voice...
-echo       the first run downloads the voice model ^(~80 MB, one time only^)
-echo       loading it and speaking a test line ^(this can take a minute^) ...
-REM A failure is reported but not fatal: the app still starts and the admin
-REM panel can repair speech later.
-"%VPY%" -m app.main --prepare-tts
-if errorlevel 1 echo       NOTE: speech is not ready; the app will still start.
-
-echo Starting Sister RexenIOT...
-echo.
-echo   ----------------------------------------------------------
-echo    Open:        http://localhost:%REXENIOT_PORT%/
-echo    Admin panel: http://localhost:%REXENIOT_PORT%/admin
-echo.
-echo    Everything is stored inside this folder.
-echo    Close this window to stop.
-echo   ----------------------------------------------------------
-echo.
-
-"%VPY%" -m app.main --host 127.0.0.1 --port %REXENIOT_PORT%
+REM ------------------------------------------------------------------ hand ---
+REM Steps 2 to 6 are bootstrap.py's: the environment, the packages, the GPU note,
+REM the speech warm-up and the server. It re-prints the banner itself.
+REM REXENIOT_OFFLINE is already exported above, so it needs no flag here.
+"%USE_PY%" "%APP_DIR%\scripts\bootstrap.py" ^
+  --venv "%VENV%" ^
+  --req "%APP_DIR%\requirements.txt" ^
+  --mark "%MARK%" ^
+  --port %REXENIOT_PORT% ^
+  --host localhost ^
+  --bind 127.0.0.1 ^
+  --folder "%APP_DIR%" ^
+  --portable
+set "CODE=%ERRORLEVEL%"
 
 echo.
-echo  Sister RexenIOT has stopped.
+if not "%CODE%"=="0" echo   Sister RexenIOT exited with code %CODE%.
 pause
 endlocal
+exit /b %CODE%

@@ -334,6 +334,18 @@ def _platform_info() -> dict[str, Any]:
     }
 
 
+def light_profile() -> dict[str, Any]:
+    """Just the GPU and OS facts, without the expensive probes.
+
+    ``scan()`` takes about five seconds -- it enumerates disks, memory, CPU
+    flags and every runtime -- which is fine for the admin panel but too slow to
+    run on every launch. The launchers only need to know whether a GPU is
+    present and which OS they are on, so they call this instead and feed the
+    result to ``torch_gpu_advice`` / ``directml_advice``.
+    """
+    return {"gpu": _gpus(), "os": _platform_info()}
+
+
 def nvidia_compute_cap(profile: dict[str, Any]) -> str:
     """The compute capability of the first NVIDIA GPU, or "".
 
