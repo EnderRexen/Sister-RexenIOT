@@ -1,0 +1,22 @@
+# Sister RexenIOT - speech-to-text (dictation) set
+#
+# Installed by the launcher on a normal run, so dictation works out of the box.
+# Skip it with REXENIOT_NO_STT=1, or install it by hand with:
+#
+#   python -m pip install -r requirements-stt.txt
+#
+# With this installed, dictation runs entirely on this machine: the browser
+# records audio, POSTs it to /api/transcribe, and faster-whisper turns it into
+# text locally. Without it, dictation falls back to the browser's own speech
+# recognition, which needs Chrome or Edge and sends audio to the vendor.
+#
+# CPU is the default and works everywhere. CTranslate2 also has CUDA support and
+# the engine uses it automatically when a GPU is visible, but the wheels on PyPI
+# are CPU-only; a GPU build comes from the CTranslate2 project's own index.
+
+faster-whisper>=1.0
+
+# PyAV supplies the ffmpeg that decodes browser recordings (Opus in WebM, AAC in
+# MP4). faster-whisper pulls it in, but pin the floor explicitly: 11.0 is where
+# the container/decoder API this app uses stabilised.
+av>=11.0

@@ -102,16 +102,56 @@ class TTSConfig(BaseModel):
     tier: Literal["nano", "micro", "mini", "full"] = "mini"
 
 
-class VoiceInputConfig(BaseModel):
-    """Browser-side speech recognition; no server audio capture is used.
+class STTConfig(BaseModel):
+    """Local speech-to-text for dictation and wake mode.
 
-    Wake mode keeps a recognition session open continuously, waiting for one of
+    The browser records audio and POSTs it to ``/api/transcribe``; the server
+    transcribes it here. That keeps the audio on this machine, which the
+    browser's own recogniser does not do.
+
+    Dictation needs the optional speech-to-text set (``requirements-stt.txt``).
+    Until it is installed, transcription reports itself as unavailable and the
+    HUD falls back to the browser recogniser, so the feature degrades instead of
+    breaking.
+    """
+
+    enabled: bool = True
+    #: faster-whisper repository id. tiny.en is 75 MB and transcribes faster than
+    #: real time on a CPU, which is what a command-length utterance needs.
+    model_id: str = "Systran/faster-whisper-tiny.en"
+    device: Literal["auto", "cpu", "cuda"] = "auto"
+    #: Empty means "pick from the device": int8 on a CPU, float16 on a GPU.
+    #: CTranslate2 rejects None here, so the engine resolves it.
+    compute_type: str = ""
+    #: Language hint for the model. Empty means autodetect, which is right for a
+    #: multilingual install but costs a little latency and accuracy.
+    language: str = "en"
+    #: 1 is fastest, 5 is most accurate. Commands are short, so 1 is enough.
+    beam_size: int = 1
+
+
+class VoiceInputConfig(BaseModel):
+    """How the HUD captures speech, and the wake-word behaviour around it.
+
+    Two capture paths exist. The server path records audio in the browser and
+    sends it to ``/api/transcribe``, where ``STTConfig`` transcribes it locally.
+    The browser path uses the vendor's own recogniser, which needs Chrome or Edge
+    and sends the audio to that vendor.
+
+    ``engine`` picks between them. "server" and "browser" force one; "auto"
+    prefers the server and falls back to the browser, so a machine without the
+    optional speech-to-text set still dictates.
+
+    Wake mode keeps a capture session open continuously, waiting for one of
     ``wake_words``. After the wake word the session stays open and every
     utterance is treated as addressed to the assistant until one of
     ``sleep_words`` is heard or ``session_idle_s`` passes with no speech.
     """
 
     enabled: bool = True
+    #: Which capture path to use: "server" (local, needs requirements-stt.txt),
+    #: "browser" (vendor recogniser, Chrome/Edge only), or "auto".
+    engine: Literal["server", "browser", "auto"] = "auto"
     language: str = "en-US"
     auto_send: bool = True
     silence_ms: int = 1400
@@ -212,6 +252,7 @@ class AppConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     tts: TTSConfig = Field(default_factory=TTSConfig)
+    stt: STTConfig = Field(default_factory=STTConfig)
     voice_input: VoiceInputConfig = Field(default_factory=VoiceInputConfig)
     tools: ToolConfig = Field(default_factory=ToolConfig)
     active_personality: str = "rexeniot"

@@ -190,9 +190,19 @@ that simply cannot see the driver.
 
 ### Speech input
 
-Dictation uses the browser's `SpeechRecognition`, so your microphone audio never
-leaves the machine running the browser. Press and hold the microphone button, or
-hold the space bar.
+Dictation has two paths, chosen in the **Voice** tab of the admin panel:
+
+- **On this machine** (the default). The browser records a short clip and posts it
+  to `/api/transcribe`, where a local faster-whisper model turns it into text.
+  Nothing is sent to a third party, and any browser works — not just Chrome.
+- **Browser recogniser.** The browser's own `SpeechRecognition` does the work.
+  This needs Chrome or Edge.
+
+The launcher installs the dictation set on a normal run, so the first path works
+out of the box. Skip it with `REXENIOT_NO_STT=1`, or install it later from the
+admin panel or with `pip install -r requirements-stt.txt`.
+
+Press and hold the microphone button, or hold the space bar.
 
 ## Personalities
 

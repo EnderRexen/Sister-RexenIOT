@@ -123,6 +123,20 @@
     </div>
 
     <div class="card">
+      <h3>Dictation engine</h3>
+      <p class="muted">Transcribes your speech on this machine. The optional
+         speech-to-text set is about 100 MB; without it, dictation falls back to the
+         browser's own recogniser.</p>
+      <div class="kv" id="stt-status"></div>
+      <div class="row-actions">
+        <button class="btn-ghost" id="btn-stt-install" hidden>Install speech-to-text</button>
+        <button class="btn-ghost" id="btn-stt-preview">Test dictation</button>
+        <button class="btn-ghost" id="btn-stt-reload">Reload engine</button>
+      </div>
+      <p class="muted" id="stt-preview-result"></p>
+    </div>
+
+    <div class="card">
       <h3>GPU acceleration</h3>
       <p class="muted">Whether the installed speech runtime can actually reach the GPU.
          A GPU in the machine is not the same as a GPU the engine can use.</p>
@@ -403,9 +417,19 @@
 
     <div class="card">
       <h3>Speech input</h3>
-      <p class="muted">Dictation uses the browser's speech recognition, so audio never leaves
-         the machine running the browser.</p>
+      <p class="muted">Two ways to capture speech. "On this machine" records a clip in the
+         browser and has the server transcribe it, so the audio never reaches a third
+         party and any browser works. "Browser" uses the vendor's own recogniser, which
+         needs Chrome or Edge. "Automatic" prefers this machine and falls back to the
+         browser when the speech-to-text set is not installed.</p>
       <div class="field-grid">
+        <label>Capture
+          <select name="voice_input.engine" data-cfg="voice_input.engine" id="voice-engine-select">
+            <option value="auto">Automatic (prefer this machine)</option>
+            <option value="server">On this machine</option>
+            <option value="browser">Browser recogniser</option>
+          </select>
+        </label>
         <label>Language
           <input name="voice_input.language" data-cfg="voice_input.language" placeholder="en-US" />
         </label>

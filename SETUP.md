@@ -280,14 +280,25 @@ exact command for whatever card it finds, so you can copy it from there.
 
 ### Voice input (talking to her)
 
-Voice input runs **in your browser** — no microphone audio is sent to the server.
-It needs Chrome or Edge, which are the browsers that support speech recognition.
+Voice input has two paths, set under **Capture** in the **Voice** tab.
+
+**On this machine** is the default. The browser records a short clip and posts it
+to the server, which transcribes it locally with faster-whisper. Your audio never
+reaches a third party, and any browser works. The launcher installs the small
+speech-to-text set on a normal run (~100 MB, one time); skip it with
+`REXENIOT_NO_STT=1` and dictation falls back to the browser recogniser.
+
+**Browser recogniser** uses the browser's own `SpeechRecognition`. It needs
+Chrome or Edge, and sends the audio to that vendor. Choose it if you prefer not
+to install anything else.
 
 - Press the **microphone** button to dictate a message.
 - **Wake word mode** lets you say **"hey rexeniot"** (or "okay rexeniot",
   "hey sister", "wake up rexeniot") hands-free. She answers "I'm here." and keeps
   listening until you say **"stop listening"**, "go to sleep", "goodbye rexeniot"
   or similar, or until 45 seconds pass with no speech.
+
+Wake word mode uses the browser recogniser, so it needs Chrome or Edge.
 
 Both the wake words and the sleep words are editable in the **Voice** tab.
 

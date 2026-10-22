@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from .. import config, hardware, model_catalog, personalities, profiles, skills, uploads
 from ..hardware import directml_advice, nvidia_compute_cap, torch_gpu_advice
 from ..llm import client as llm_client
+from ..stt import available as stt_available, engine as stt_engine
 from ..tools import registry
 from ..tts import engine
 
@@ -657,6 +658,67 @@ async def tts_status(x_admin_token: str | None = Header(default=None)) -> dict[s
     return engine.status
 
 
+@router.get("/stt/status")
+async def stt_status(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    """The dictation engine's state, plus whether its packages are installed.
+
+    ``available`` is separate from ``state`` on purpose: a missing optional
+    install is not an error, and the panel needs to tell that apart from a model
+    that failed to load.
+    """
+    _check(x_admin_token)
+    return {**stt_engine.status, "available": stt_available()}
+
+
+@router.post("/stt/reload")
+async def stt_reload(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    _check(x_admin_token)
+    cfg = config.load()
+    try:
+        stt_engine.unload()
+        await asyncio.to_thread(stt_engine.ensure_loaded, cfg.stt.model_id)
+    except Exception as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return {"ok": True, "engine": {**stt_engine.status, "available": stt_available()}}
+
+
+@router.post("/stt/unload")
+async def unload_stt(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    _check(x_admin_token)
+    stt_engine.unload()
+    return {"ok": True, "engine": stt_engine.status}
+
+
+@router.post("/stt/preview")
+async def stt_preview(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    """Load the dictation model and prove it transcribes, using the TTS engine.
+
+    Speaking a known line and transcribing it back exercises the whole chain --
+    model load, decode, inference -- without needing the user to record
+    something. A model that loads but cannot decode would otherwise look fine
+    until the first real utterance.
+    """
+    _check(x_admin_token)
+    cfg = config.load()
+    if not cfg.stt.enabled:
+        raise HTTPException(503, "Speech-to-text is disabled in the admin panel.")
+    if not stt_available():
+        raise HTTPException(
+            503,
+            "The speech-to-text set is not installed. Install it with "
+            "'pip install -r requirements-stt.txt'.",
+        )
+
+    probe = "Systems online. Dictation is working."
+    try:
+        audio = await asyncio.to_thread(engine.wav_bytes, probe, use_cache=False)
+        result = await asyncio.to_thread(stt_engine.transcribe, audio)
+    except Exception as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return {"ok": True, "heard": result["text"], "expected": probe,
+            "seconds": result["duration_s"], "engine": stt_engine.status}
+
+
 def accelerator_hints(profile: dict[str, Any]) -> list[dict[str, str]]:
     """The install advice for this machine, as hint rows.
 
@@ -867,6 +929,7 @@ async def integrations(x_admin_token: str | None = Header(default=None)) -> dict
         "home_assistant": bool(cfg.tools.home_assistant_url and cfg.tools.resolved_ha_token()),
         "mqtt": bool(cfg.tools.mqtt_host),
         "tts": engine.status,
+        "stt": {**stt_engine.status, "available": stt_available()},
     }
 
 
@@ -1226,6 +1289,7 @@ async def stats(x_admin_token: str | None = Header(default=None)) -> dict[str, A
         "models_mb": round(models_bytes / 1024**2, 2),
         "personalities": len(personalities.load()),
         "tts": engine.status,
+        "stt": {**stt_engine.status, "available": stt_available()},
         "tools": len(registry.all()),
         "uptime_note": "since process start",
     }

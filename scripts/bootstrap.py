@@ -185,6 +185,29 @@ def _phase_setup(args: argparse.Namespace) -> int:
         mark.write_text(_sha256(req), encoding="utf-8")
         _say("      dependencies ready")
 
+    # ------------------------------------------------- dictation (default on) ---
+    # Dictation ships enabled, so its packages are installed here rather than
+    # left to the admin panel: a feature that is on by default but silently
+    # missing its engine is worse than one that is off. The set is small next to
+    # the ONNX speech runtime already being installed, and a failure is a warning
+    # -- the app still runs and the panel can install it later.
+    if args.stt and not args.offline:
+        stt_req = req.parent / "requirements-stt.txt"
+        if stt_req.is_file() and not _reinstall_needed(stt_req, mark.with_name(mark.name + ".stt")):
+            _say("      dictation unchanged, skipping install")
+        elif stt_req.is_file():
+            _say("      installing the dictation set (~100 MB, one time only) ...")
+            if subprocess.run(
+                [str(py), "-m", "pip", "install", "-r", str(stt_req), "--quiet"]
+            ).returncode == 0:
+                stt_mark = mark.with_name(mark.name + ".stt")
+                stt_mark.parent.mkdir(parents=True, exist_ok=True)
+                stt_mark.write_text(_sha256(stt_req), encoding="utf-8")
+            else:
+                _say("      NOTE: the dictation set did not install.")
+                _say("            Dictation will use the browser recogniser; the")
+                _say("            admin panel can install it later.")
+
     # Re-enter on the venv interpreter, where `app` is importable. Phase A must
     # not import it: pydantic is not installed until the step above.
     argv = [str(py), str(Path(__file__).resolve()), *args.forwarded, "--phase", "run"]
@@ -307,6 +330,16 @@ def _phase_run(args: argparse.Namespace) -> int:
     if subprocess.run([str(py), "-m", "app.main", "--prepare-tts"]).returncode != 0:
         _say("      NOTE: speech is not ready; the app will still start.")
 
+    if args.stt and not args.offline:
+        _say()
+        _say("      preparing dictation (downloads a small model, one time only)")
+        _say("      loading it and transcribing a test line ...")
+        # Same reasoning as the speech step: a load is not proof. This speaks a
+        # known line and transcribes it back. A failure is not fatal -- dictation
+        # falls back to the browser recogniser.
+        if subprocess.run([str(py), "-m", "app.main", "--prepare-stt"]).returncode != 0:
+            _say("      NOTE: dictation is not ready; the app will still start.")
+
     _say("[6/6] Starting Sister RexenIOT...")
     if _port_in_use(args.bind, args.port):
         _say()
@@ -357,6 +390,12 @@ def main() -> int:
     parser.add_argument("--folder", default="", help="the app folder, for display")
     parser.add_argument("--portable", action="store_true")
     parser.add_argument(
+        "--stt",
+        action="store_true",
+        default=not os.environ.get("REXENIOT_NO_STT", "").strip(),
+        help="install the dictation set (default: on, REXENIOT_NO_STT=1 to skip)",
+    )
+    parser.add_argument(
         "--offline",
         action="store_true",
         default=bool(os.environ.get("REXENIOT_OFFLINE", "").strip()),
@@ -376,6 +415,7 @@ def main() -> int:
         "--bind", args.bind,
         "--folder", args.folder,
         *( ["--portable"] if args.portable else [] ),
+        *( ["--stt"] if args.stt else [] ),
         *( ["--offline"] if args.offline else [] ),
     ]
 

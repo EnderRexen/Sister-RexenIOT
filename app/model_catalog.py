@@ -201,6 +201,14 @@ REQUIREMENT_SETS: dict[str, dict[str, Any]] = {
             "with no CUDA toolkit, so it works where the CUDA build will not."
         ),
     },
+    "stt": {
+        "label": "Speech-to-text (dictation)",
+        "file": "requirements-stt.txt",
+        "detail": (
+            "Adds ~100 MB. Transcribes dictation on this machine instead of "
+            "sending it to the browser vendor, and works in any browser."
+        ),
+    },
 }
 
 #: The import each requirement set exists to provide. Checked by importing, not
@@ -212,6 +220,7 @@ REQUIREMENT_SETS: dict[str, dict[str, Any]] = {
 _REQUIREMENT_PROBES: dict[str, list[str]] = {
     "full": ["torch", "torchaudio", "transformers", "kittenml"],
     "gpu": ["onnxruntime"],
+    "stt": ["faster_whisper", "av"],
 }
 
 #: Probes are imports, which are not free (torch alone takes ~1s and the torch
@@ -379,7 +388,13 @@ def prerequisites(entry: dict[str, Any]) -> dict[str, Any]:
     both, or the scan path reports every tier as needing nothing.
     """
     requires = entry.get("requires") or entry.get("requirements") or {}
-    key = "full" if requires.get("torch") else None
+    if entry.get("kind") == "stt":
+        # Transcription models need the optional speech-to-text set. It is a
+        # separate install from the torch stack, so keying off ``requires.torch``
+        # would report every dictation model as needing nothing.
+        key = "stt"
+    else:
+        key = "full" if requires.get("torch") else None
     if key is None:
         return {"needed": False, "key": None, "label": "", "detail": "",
                 "satisfied": True, "missing": [], "broken": [], "reason": "",

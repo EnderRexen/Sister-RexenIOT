@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__, config, hardware, model_catalog, personalities
 from .routers import admin, chat, status
+from .stt import available as stt_available, engine as stt_engine
 from .tts import engine
 
 log = logging.getLogger("rexeniot")
@@ -65,6 +66,21 @@ async def lifespan(app: FastAPI):
                 log.warning("TTS warm-up failed: %s", exc)
 
         asyncio.create_task(warm())
+
+    if cfg.stt.enabled and stt_available():
+        # Same reasoning as TTS: the first dictation should not pay the load.
+        # Guarded on availability because this is an optional install and a
+        # missing set is expected, not a failure worth logging on every boot.
+        import asyncio
+
+        async def warm_stt() -> None:
+            try:
+                await asyncio.to_thread(stt_engine.ensure_loaded)
+                log.info("STT ready: %s", stt_engine.status)
+            except Exception as exc:
+                log.warning("STT warm-up failed: %s", exc)
+
+        asyncio.create_task(warm_stt())
 
     yield
     log.info("Sister RexenIOT shutting down")
@@ -210,6 +226,47 @@ def prepare_tts() -> int:
     return 0
 
 
+def prepare_stt() -> int:
+    """Download the dictation model and prove it transcribes real audio.
+
+    Loading alone proves little: the failure modes that matter (a decoder that
+    cannot read the container, a bad compute type) only appear on a real
+    inference. So this synthesises a known line with the TTS engine and
+    transcribes it back, which exercises decode, load and inference together.
+
+    Skipped without complaint when the optional set is absent -- dictation is a
+    fallback-capable feature, not a hard requirement of a working install.
+    """
+    cfg = config.load()
+    if not cfg.stt.enabled:
+        print("      dictation is disabled in the configuration, skipping")
+        return 0
+    if not stt_available():
+        print("      dictation set not installed, skipping (optional)")
+        print("      Install it with: python -m pip install -r requirements-stt.txt")
+        return 0
+
+    print(f"      model:  {cfg.stt.model_id}")
+    try:
+        stt_engine.ensure_loaded()
+    except Exception as exc:
+        print(f"      ERROR: the dictation model could not be loaded: {exc}")
+        return 1
+
+    probe = "Systems online. Dictation is working."
+    try:
+        audio = engine.wav_bytes(probe, use_cache=False)
+        result = stt_engine.transcribe(audio)
+    except Exception as exc:
+        print(f"      ERROR: the model loaded but could not transcribe: {exc}")
+        return 1
+
+    print(f"      heard:  {result['text']!r}")
+    print(f"      dictation ready on {stt_engine.status.get('device')} "
+          f"({result['duration_s']}s of audio)")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the Sister RexenIOT server.")
     parser.add_argument("--host", default=None)
@@ -221,12 +278,22 @@ def main() -> None:
         action="store_true",
         help="download and load the speech model, speak a test line, then exit",
     )
+    parser.add_argument(
+        "--prepare-stt",
+        action="store_true",
+        help="download and load the dictation model, transcribe a test line, then exit",
+    )
     args = parser.parse_args()
 
     if args.prepare_tts:
         configure_logging()
         personalities.load()  # seed built-ins so a first run has a persona
         raise SystemExit(prepare_tts())
+
+    if args.prepare_stt:
+        configure_logging()
+        personalities.load()
+        raise SystemExit(prepare_stt())
 
     cfg = config.load()
     host = args.host or cfg.server.host

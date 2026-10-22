@@ -224,6 +224,7 @@ function renderHardware(profile) {
 
   renderModels(recs.models || []);
   renderTtsStatus();
+  renderSttStatus();
   renderAccelerator();
   renderStorageStatus();
 }
@@ -443,6 +444,52 @@ async function renderTtsStatus() {
   } catch { /* ignore */ }
 }
 
+async function renderSttStatus() {
+  const box = $("#stt-status");
+  if (!box) return;
+  let s;
+  try {
+    s = await api("/admin/stt/status");
+  } catch {
+    return;
+  }
+  const rows = {
+    State: s.state,
+    "Model": s.model_id || "—",
+    Device: s.device || "—",
+    Requested: s.device_requested || "auto",
+    Precision: s.compute_type || "—",
+    "Max clip": s.max_seconds ? `${s.max_seconds}s` : "—",
+  };
+  if (!s.available) {
+    rows.State = "not installed";
+    rows.Detail = "Optional; dictation falls back to the browser recogniser.";
+  }
+  box.innerHTML = Object.entries(rows)
+    .map(([k, v]) => `<div class="kv-row"><span>${escapeHtml(k)}</span><strong>${escapeHtml(String(v ?? "—"))}</strong></div>`)
+    .join("");
+  const install = $("#btn-stt-install");
+  if (install) install.hidden = Boolean(s.available);
+  const preview = $("#btn-stt-preview");
+  if (preview) preview.disabled = !s.available;
+}
+
+async function previewStt() {
+  const out = $("#stt-preview-result");
+  if (out) out.textContent = "speaking a test line, then transcribing it…";
+  setSaveState("testing dictation…", "warn");
+  try {
+    const r = await api("/admin/stt/preview", { method: "POST" });
+    const ok = r.heard && r.expected && r.heard.toLowerCase().replace(/[^a-z ]/g, "")
+      === r.expected.toLowerCase().replace(/[^a-z ]/g, "");
+    if (out) out.textContent = `${ok ? "Match" : "Heard"} — ${r.heard}`;
+    setSaveState("dictation works", "ok");
+  } catch (err) {
+    if (out) out.textContent = `Failed: ${err.message}`;
+    setSaveState("dictation failed", "err");
+  }
+}
+
 async function renderAccelerator() {
   const box = $("#accelerator-status");
   if (!box) return;
@@ -606,6 +653,7 @@ async function applyPlan(verify) {
     toast(`Applied: ${res.summary || "settings updated"}`, "ok");
     renderMeasured(res.measured, null);
     renderTtsStatus();
+    renderSttStatus();
     renderAccelerator();
     // Re-verify so the checklist reflects the config that is now live.
     await runVerification();
@@ -988,6 +1036,7 @@ async function applyProfile() {
     out.textContent = "applied";
     toast(`Applied ${id}.`, "ok");
     renderTtsStatus();
+    renderSttStatus();
     renderAccelerator();
   } catch (err) {
     out.textContent = `failed — ${err.message}`;
@@ -1304,6 +1353,21 @@ function wireEvents() {
     } catch (err) { toast(err.message, "err"); }
   });
 
+  $("#btn-stt-preview")?.addEventListener("click", previewStt);
+
+  $("#btn-stt-install")?.addEventListener("click", async () => {
+    await installPrerequisites("stt");
+    renderSttStatus();
+  });
+
+  $("#btn-stt-reload")?.addEventListener("click", async () => {
+    try {
+      const r = await api("/admin/stt/reload", { method: "POST" });
+      toast(`Dictation engine reloaded on ${r.engine?.device || "auto"}.`, "ok");
+      renderSttStatus();
+    } catch (err) { toast(err.message, "err"); }
+  });
+
   $("#profile-select").addEventListener("change", updateProfileDescription);
   $("#btn-profile-apply").addEventListener("click", applyProfile);
   $("#btn-profile-save").addEventListener("click", saveProfile);
@@ -1410,6 +1474,7 @@ async function boot() {
     else runScan(true);
 
     renderTtsStatus();
+    renderSttStatus();
     renderAccelerator();
     loadIntegrations();
     refreshStorage();

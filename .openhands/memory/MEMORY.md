@@ -437,3 +437,58 @@ identifiers, env vars, log names or filenames. The conventions are
   must be escaped `^( ^)`. An unescaped `)` closes the block early and the rest
   of the block is mis-parsed. LF-only parsing hides this, so fixing the endings
   can *reveal* new errors rather than clear them.
+- `set "VAR=py -3"` holds a command *plus arguments*. Quoting it as `"%VAR%"`
+  makes cmd.exe look for one program literally named `py -3`, which does not
+  exist. The original `start.cmd` invoked `%PYEXE%` unquoted everywhere, which
+  is why it worked. Rule: quote a variable holding a bare path (spaces in the
+  folder); never quote one holding a command with arguments. Enforced by check 9
+  in `scripts/check_launchers.py`.
+
+## The launcher pipeline lives in one file (2026-10-22 refactor)
+- All four launchers (`start.cmd`, `start-portable.cmd`, `start.sh`,
+  `start-portable.sh`) are now thin: find a Python, then `exec`
+  `scripts/bootstrap.py`. The launcher *cannot* find its own interpreter for the
+  pipeline, because a machine with no Python cannot run the pipeline at all --
+  that asymmetry is why the split is by concern, not by platform.
+- The four used to carry private copies of the pipeline and drifted: the GPU
+  advice reached `start.cmd`/`start.sh` but never the portable pair, so a
+  portable install with a discrete GPU was told nothing. Nothing compared the
+  four files, so the drift was invisible.
+- The GPU advice itself lives in `app/hardware.py` (`torch_gpu_advice`,
+  `directml_advice`), because the admin panel reads it too. bootstrap.py *calls*
+  it rather than restating it, so there is one definition.
+- `scripts/check_launchers.py` now fails if any launcher reimplements a step
+  (pip install, speech install, TTS warm-up, GPU advice, `app.main`) or names
+  bootstrap.py only in a comment. `scripts/test_launcher_contract.py` asserts the
+  same contract. Both were verified to actually fail when drift is injected --
+  two of the first-draft rules did not, and were rewritten.
+
+## Verifying a shipped zip (do this, extraction lies)
+- `zipfile.extractall` does NOT restore the executable bit, so `./start.sh` from
+  a Python extraction fails with "Permission denied" even though the zip stores
+  mode 771 and real `unzip` restores it. Chmod the `.sh` files after extracting
+  in Python, or you will chase a bug that is not there.
+- Rebuild the zip (`scripts/build_source_zip.py`) after editing launchers, then
+  compare every entry against the working tree -- the builder re-asserts CRLF
+  independently, so a stale zip can look correct while the tree is broken, and
+  vice versa.
+- Tests need `PYTHONPATH=.` or they fail with `ModuleNotFoundError: No module
+  named 'app'`. Playwright's bundled browser is absent; the UI tests pass
+  `executable_path="/usr/bin/chromium"` explicitly, so they do run. Tests
+  hardcoding port 8060 need a server started on that port.
+
+## Environment facts (this sandbox)
+- `GITHUB_TOKEN` returns 401 and `gh auth status` reports it invalid; the git
+  remote is a bare HTTPS URL with no token, so `git ls-remote`/`push` prompt
+  interactively and hang. Pass `-c credential.helper= -c core.askPass=` or use
+  the API, and expect the remote checks to be unavailable.
+- No `unzip` binary. Use Python's `zipfile`.
+- Live preview is port 12000 (`web/download/` is served there); the app's own
+  default is 8060. `scripts/keep-alive.sh` supervises 12000 -- restart it with
+  `nohup ./scripts/keep-alive.sh &` if it dies.
+- Only 4 cores / 15.6 GB RAM and no GPU here, so the RTX 5070 + 32 GB target is
+  exercised only via `hardware.recommend()` with synthetic profiles.
+- STT is browser-side only (`webkitSpeechRecognition` in `web/js/app.js`); there
+  is no server-side transcription route and no `/api/transcribe`. Voice *input*
+  therefore needs Chrome/Edge and a network; voice *output* (KittenTTS) is local.
+

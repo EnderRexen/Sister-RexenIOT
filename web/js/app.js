@@ -32,6 +32,13 @@ const state = {
   attachments: [],
   config: null,
   osk: null,
+  // Local (server) capture: the browser records a clip and posts it to
+  // /api/transcribe. Used for push-to-talk when the optional speech-to-text set
+  // is installed, because it works in any browser and keeps the audio here.
+  recorder: null,
+  recording: false,
+  recordChunks: [],
+  captureStream: null,
 };
 
 /* --------------------------------------------------------------- utilities */
@@ -945,7 +952,154 @@ function handleWakeUtterance(heard, isFinal) {
   sendText(command.trim());
 }
 
+/* ------------------------------------------------------- local (server) STT */
+
+/**
+ * Whether dictation should be recorded here and transcribed by the server.
+ *
+ * The admin's voice_input.engine picks the path. "browser" always uses the
+ * vendor recogniser. "server" and "auto" both use this machine once the
+ * speech-to-text set is installed -- that is the documented preference, since it
+ * works in any browser and keeps the audio local. They differ when the set is
+ * absent: "auto" quietly falls back to the browser, while "server" refuses so
+ * the user is told what to install instead of silently getting the vendor.
+ */
+function useLocalCapture() {
+  const vi = (state.config && state.config.voice_input) || {};
+  const stt = (state.config && state.config.stt) || {};
+  if (vi.engine === "browser") return false;
+  return Boolean(stt.enabled && stt.available);
+}
+
+/** True when the admin demanded local capture but its packages are missing. */
+function localCaptureMissing() {
+  const vi = (state.config && state.config.voice_input) || {};
+  const stt = (state.config && state.config.stt) || {};
+  return vi.engine === "server" && !(stt.enabled && stt.available);
+}
+
+/** Pick a recording mime the browser actually supports, best first. */
+function pickMimeType() {
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/ogg;codecs=opus",
+    "audio/mp4",
+  ];
+  for (const type of candidates) {
+    if (window.MediaRecorder?.isTypeSupported?.(type)) return type;
+  }
+  return "";
+}
+
+async function startLocalCapture() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    toast("This browser cannot record audio.", "err");
+    return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    toast(`Microphone unavailable: ${err.message}`, "err");
+    return;
+  }
+  const mimeType = pickMimeType();
+  let recorder;
+  try {
+    recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+  } catch (err) {
+    stream.getTracks().forEach((t) => t.stop());
+    toast(`Recording is unavailable: ${err.message}`, "err");
+    return;
+  }
+
+  state.captureStream = stream;
+  state.recorder = recorder;
+  state.recordChunks = [];
+  recorder.addEventListener("dataavailable", (e) => {
+    if (e.data && e.data.size) state.recordChunks.push(e.data);
+  });
+  recorder.addEventListener("stop", () => {
+    const blob = new Blob(state.recordChunks, { type: mimeType || "audio/webm" });
+    state.recordChunks = [];
+    state.captureStream?.getTracks().forEach((t) => t.stop());
+    state.captureStream = null;
+    state.recorder = null;
+    transcribeRecording(blob);
+  });
+
+  stopSpeaking();
+  recorder.start();
+  state.listening = true;
+  setReactor("listening");
+  $("#btn-mic").setAttribute("aria-pressed", "true");
+  $("#listen-hint").hidden = false;
+}
+
+function stopLocalCapture() {
+  if (state.recorder && state.recorder.state !== "inactive") {
+    state.recorder.stop(); // the stop handler sends it
+  } else {
+    state.captureStream?.getTracks().forEach((t) => t.stop());
+    state.captureStream = null;
+  }
+  state.listening = false;
+  $("#btn-mic").setAttribute("aria-pressed", "false");
+  $("#listen-hint").hidden = true;
+  setReactor("idle");
+}
+
+/** Post a recorded clip to /api/transcribe and put the text in the composer. */
+async function transcribeRecording(blob) {
+  if (!blob || !blob.size) {
+    toast("Nothing was recorded.", "err");
+    return;
+  }
+  setReactor("thinking");
+  try {
+    const form = new FormData();
+    form.append("audio", blob, "speech.webm");
+    const res = await fetch("/api/transcribe", { method: "POST", body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    const text = (data.text || "").trim();
+    if (!text) {
+      toast("I didn't catch that.", "err");
+      return;
+    }
+    if (state.autoSend) {
+      await sendText(text);
+    } else {
+      const input = $("#input");
+      input.value = input.value ? `${input.value} ${text}` : text;
+      autoGrow(input);
+      input.focus();
+    }
+  } catch (err) {
+    toast(`Transcription failed: ${err.message}`, "err");
+  } finally {
+    setReactor("idle");
+  }
+}
+
 function toggleListening() {
+  // Local capture is preferred whenever it is configured and installed: it works
+  // in every browser and never sends the audio to a third party.
+  if (localCaptureMissing()) {
+    toast("Dictation is set to this machine, but its speech-to-text set is not "
+      + "installed. Run: pip install -r requirements-stt.txt", "err");
+    return;
+  }
+  if (useLocalCapture()) {
+    if (WAKE.mode !== "off") {
+      disarmWakeMode();
+      return;
+    }
+    if (state.listening) stopLocalCapture();
+    else startLocalCapture();
+    return;
+  }
   if (!state.recognition) {
     toast("This browser has no speech recognition. Use Chrome or Edge, or type instead.", "err");
     return;
@@ -1304,6 +1458,17 @@ async function loadPublicConfig() {
   state.autoSend = vi.auto_send !== false;
   if (state.recognition && vi.language) state.recognition.lang = vi.language;
 
+  // The mic is usable with either capture path. Boot-time titles assume the
+  // native recogniser, so correct them once the config says which path is live.
+  const mic = $("#btn-mic");
+  if (mic) {
+    if (useLocalCapture()) {
+      mic.title = "Push to talk (recorded and transcribed on this machine)";
+    } else if (!state.recognition) {
+      mic.title = "Speech input unavailable in this browser";
+    }
+  }
+
   const btn = $("#btn-wake");
   if (btn) {
     const available = Boolean(state.recognition) && vi.wake_enabled;
@@ -1435,3 +1600,8 @@ async function boot() {
 }
 
 boot();
+
+// Expose a few internals for automated checks. Module scope is otherwise
+// unreachable from the page context, and a browser-driven test is the only way
+// to exercise the record -> upload -> transcribe path end to end.
+window.__rexeniot = { state, useLocalCapture, localCaptureMissing, toggleListening };

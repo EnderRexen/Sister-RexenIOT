@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -14,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from .. import agent, config, personalities, uploads
 from ..llm import client as llm_client
+from ..stt import STTError, available as stt_available, engine as stt_engine
 from ..tools import builtin as builtin_tools
 from ..tts import TTSError, engine
 
@@ -218,6 +220,33 @@ async def speak(req: SpeakRequest) -> Response:
     return Response(content=audio, media_type="audio/wav", headers={"Cache-Control": "no-store"})
 
 
+@router.post("/transcribe")
+async def transcribe(
+    audio: UploadFile = File(...),
+    language: str = Form(""),
+) -> dict[str, Any]:
+    """Transcribe a recorded utterance to text, entirely on this machine.
+
+    Takes multipart audio because that is what the browser's MediaRecorder
+    produces and what ``FormData`` posts most cheaply -- no base64 inflation, no
+    JSON escaping of a binary blob. The body is decoded in memory; nothing is
+    written to disk.
+    """
+    cfg = config.load()
+    if not cfg.stt.enabled:
+        raise HTTPException(503, "Speech-to-text is disabled in the admin panel.")
+    data = await audio.read()
+    try:
+        # Transcription is CPU/GPU bound and blocking; keep it off the event loop.
+        result = await asyncio.to_thread(
+            stt_engine.transcribe, data, language=(language or None)
+        )
+    except STTError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    result["engine"] = stt_engine.status
+    return result
+
+
 @router.get("/voices")
 async def voices() -> dict[str, Any]:
     cfg = config.load()
@@ -332,6 +361,7 @@ async def public_config() -> dict[str, Any]:
         "branding": cfg.branding.model_dump(),
         "voice_input": {
             "enabled": cfg.voice_input.enabled,
+            "engine": cfg.voice_input.engine,
             "language": cfg.voice_input.language,
             "auto_send": cfg.voice_input.auto_send,
             "wake_enabled": cfg.voice_input.wake_enabled,
@@ -340,6 +370,13 @@ async def public_config() -> dict[str, Any]:
             "session_idle_s": cfg.voice_input.session_idle_s,
             "acknowledge": cfg.voice_input.acknowledge,
             "acknowledgement": cfg.voice_input.acknowledgement,
+        },
+        # The HUD needs to know whether dictation can be transcribed locally
+        # before it offers the microphone, so it does not record audio that has
+        # nowhere to go.
+        "stt": {
+            "enabled": cfg.stt.enabled,
+            "available": stt_available() if cfg.stt.enabled else False,
         },
         "tts_enabled": cfg.tts.enabled,
         # The HUD needs the engine choice and the nominal voice/speed to drive the
