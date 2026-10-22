@@ -398,9 +398,18 @@ identifiers, env vars, log names or filenames. The conventions are
 - Consequence: an agent session can commit locally but **cannot publish a new
   repo**. Ask the user to create the empty repo on GitHub first, then push to it.
 - The repo is prepared for that: branch renamed `master` -> `main`, origin set to
-  `https://github.com/EnderRexen/SisterRexenIOT.git`, working tree clean.
+  `https://github.com/EnderRexen/Sister-RexenIOT.git` (hyphenated, the user's
+  chosen repo name -- note this differs from the *zip* name below), working tree
+  clean.
 - The GitHub account is **EnderRexen** (Ender Rexen). It is not a code
   identifier -- nothing in the app references it.
+- The `GITHUB_TOKEN` also **expires mid-session**: it authenticated fine early on
+  and later returned 401 "Bad credentials". Re-check before relying on it.
+- Naming, and the two forms are both deliberate: the repo is `Sister-RexenIOT`
+  (hyphenated, so it reads as a slug), while the shipped archive stays
+  `SisterRexenIOT.zip` (unhyphenated) because `web/admin.html` links to that exact
+  path and `scripts/build_source_zip.py` writes it. Do not "fix" one to match the
+  other without changing both the link and the builder.
 - Secret scan before publishing: no credentials in tracked files or in the
   shipped zip. `.gitignore` already excludes `data/config.json` and the other
   generated state, so those never reach the repo.
