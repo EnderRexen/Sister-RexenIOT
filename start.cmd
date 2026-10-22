@@ -152,7 +152,7 @@ if "!GPU_FOUND!"=="1" (
     echo             with no CUDA toolkit:
     echo                 "%PY%" -m pip install -r requirements-directml.txt
     echo             For the 1.7B tier on GPU, torch must come from the CUDA index,
-    echo             not PyPI (whose Windows wheel is CPU-only). Run both, in order:
+    echo             not PyPI ^(whose Windows wheel is CPU-only^). Run both, in order:
     echo                 "%PY%" -m pip install -r requirements-full.txt
     echo                 "%PY%" -m pip install torch torchaudio --upgrade --index-url https://download.pytorch.org/whl/cu130
     echo.
