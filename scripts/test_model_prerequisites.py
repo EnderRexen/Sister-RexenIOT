@@ -73,7 +73,7 @@ for key in model_catalog.REQUIREMENT_SETS:
     check(f"'{key}' maps to a real requirements file", spec["file"].startswith("requirements"),
           spec["file"])
 check("there is no key that is a package name",
-      all(k in {"full", "gpu"} for k in model_catalog.REQUIREMENT_SETS),
+      all(k in {"full", "gpu", "directml"} for k in model_catalog.REQUIREMENT_SETS),
       str(list(model_catalog.REQUIREMENT_SETS)))
 
 print("\n=== the requirement files exist on disk ===")

@@ -128,6 +128,12 @@ REM ------------------------------------------------------------- gpu note ----
 REM The default install is CPU-only on purpose: onnxruntime is small and works
 REM everywhere. A GPU only helps if the runtime can reach it, so this detects the
 REM card and points at the right requirements file instead of guessing.
+REM
+REM The torch line is deliberately not a plain "pip install -r requirements-full.txt":
+REM on Windows PyPI serves a CPU-only torch at the same version as the Linux CUDA
+REM build, so that command reinstalls the identical CPU wheel and the GPU stays
+REM unused. The CUDA wheel index has to be named. See the admin panel's hardware
+REM tab, which prints this advice for the card it actually finds.
 set "GPU_FOUND=0"
 where nvidia-smi >nul 2>&1 && (
   nvidia-smi -L >nul 2>&1 && set "GPU_FOUND=1"
@@ -142,8 +148,13 @@ if "!GPU_FOUND!"=="1" (
     echo             For faster speech, install the GPU build of onnxruntime:
     echo                 "%PY%" -m pip uninstall -y onnxruntime
     echo                 "%PY%" -m pip install -r requirements-gpu.txt
-    echo             For the 1.7B tier on GPU, also install:
+    echo             If that build will not load, DirectML reaches the same GPU
+    echo             with no CUDA toolkit:
+    echo                 "%PY%" -m pip install -r requirements-directml.txt
+    echo             For the 1.7B tier on GPU, torch must come from the CUDA index,
+    echo             not PyPI (whose Windows wheel is CPU-only). Run both, in order:
     echo                 "%PY%" -m pip install -r requirements-full.txt
+    echo                 "%PY%" -m pip install torch torchaudio --upgrade --index-url https://download.pytorch.org/whl/cu130
     echo.
   )
 )

@@ -188,7 +188,7 @@ function renderHardware(profile) {
     ["CPU", `${cpu.brand} · ${cpu.logical_cores} threads`],
     ["Memory", `${mem.total_gb} GB total · ${mem.available_gb} GB free`],
     ["Disk", `${disk.free_gb} GB free of ${disk.total_gb} GB`],
-    ["Platform", profile.runtimes?.platform || "—"],
+    ["Platform", (profile.os?.system ? `${profile.os.system} ${profile.os.release || ""}`.trim() : profile.runtimes?.platform) || "—"],
     ["GPU", gpus.length ? gpus.map((g) => `${g.name} (${g.vram_gb} GB)`).join(", ") : "none detected"],
     ["Runtimes", Object.entries(profile.runtimes || {})
       .filter(([k]) => ["onnxruntime", "torch", "transformers", "mqtt"].includes(k))
@@ -458,7 +458,11 @@ async function renderAccelerator() {
     const runtime = (info, buildLabel) => {
       if (!info.installed) return "not installed";
       const build = info.cuda_version ? ` (${buildLabel} ${info.cuda_version} build)` : "";
-      return `${info.version}${build} · ${info.cuda ? "GPU reachable" : "CPU only"}`;
+      // DirectML is the one accelerated provider that is not CUDA, so naming it
+      // avoids the row reading "CPU only" on a machine that is in fact using the
+      // GPU through DirectX.
+      const via = info.directml ? "GPU reachable (DirectML)" : (info.cuda ? "GPU reachable" : "CPU only");
+      return `${info.version}${build} · ${via}`;
     };
     box.innerHTML = Object.entries({
       "GPU present": a.gpu_present ? gpuName : "no",

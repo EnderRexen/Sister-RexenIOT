@@ -233,8 +233,36 @@ it does not use your graphics card. To use the GPU, replace it with the GPU buil
 ".venv\Scripts\python.exe" -m pip install -r requirements-gpu.txt
 ```
 
+`requirements-gpu.txt` is the CUDA build, so it needs an NVIDIA card. If your card
+is AMD or Intel, or the CUDA build refuses to load, Windows has a second route
+that reaches any DirectX 12 GPU with no CUDA toolkit:
+
+```
+".venv\Scripts\python.exe" -m pip uninstall -y onnxruntime
+".venv\Scripts\python.exe" -m pip install -r requirements-directml.txt
+```
+
 The **Hardware & Models** tab tells you whether the GPU is actually usable. If it
-says the runtime cannot reach your GPU, this is the fix.
+says the runtime cannot reach your GPU, one of those two is the fix.
+
+### The full tier on Windows needs one extra step
+
+PyPI gives Windows a **CPU-only** `torch` wheel. It is the same version number as
+the Linux CUDA build, so `pip install -r requirements-full.txt` on Windows
+installs a torch that cannot use your RTX 5070 — and running it again changes
+nothing. After the requirements install, replace torch from the CUDA index. Keep
+this step last:
+
+```
+".venv\Scripts\python.exe" -m pip install -r requirements-full.txt
+".venv\Scripts\python.exe" -m pip install torch torchaudio --upgrade --index-url https://download.pytorch.org/whl/cu130
+```
+
+The index has to be restricted with `--index-url`. PyPI's torch is a newer version
+than the CUDA index's, so `--extra-index-url` would lose the resolution and hand
+you the CPU wheel again. cu130 carries torch 2.14.1 and includes sm_120 kernels,
+which is what RTX 50-series (Blackwell) cards need. The admin panel prints the
+exact command for whatever card it finds, so you can copy it from there.
 
 ### Voice input (talking to her)
 

@@ -21,6 +21,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .. import config, hardware, model_catalog, personalities, profiles, skills, uploads
+from ..hardware import directml_advice, nvidia_compute_cap, torch_gpu_advice
 from ..llm import client as llm_client
 from ..tools import registry
 from ..tts import engine
@@ -656,6 +657,128 @@ async def tts_status(x_admin_token: str | None = Header(default=None)) -> dict[s
     return engine.status
 
 
+def accelerator_hints(profile: dict[str, Any]) -> list[dict[str, str]]:
+    """The install advice for this machine, as hint rows.
+
+    Kept out of the request handler because it is the part that has to differ per
+    platform, and the Windows branch cannot otherwise be exercised from a Linux
+    test host -- it is reached by calling this with a synthetic profile.
+    """
+    acc = profile.get("accelerators") or {}
+    tier = (profile.get("recommendations") or {}).get("recommended_tts_tier", "mini")
+    torch_info = acc.get("torch") or {}
+    ort_info = acc.get("onnxruntime") or {}
+    vllm_info = acc.get("vllm") or {}
+    hints: list[dict[str, str]] = []
+
+    # Every hint below is about making a *present* GPU usable. On a machine with
+    # no GPU at all the runtime is already configured correctly, so suggesting a
+    # CUDA reinstall would send the reader chasing a problem they do not have.
+    if not profile.get("gpu"):
+        return hints
+
+    if not torch_info.get("installed"):
+        advice = torch_gpu_advice(profile)
+        hints.append({
+            "for": "full tier (KittenTTS 2, torch)",
+            "command": advice["command"] if advice else "pip install -r requirements-full.txt",
+            # The plain requirements install is only a GPU install on Linux, where
+            # PyPI's default torch links CUDA. Saying "installs the CUDA build" on
+            # Windows sent the reader to a CPU-only wheel and no further clue.
+            "note": advice["note"] if advice
+            else "Installs the CUDA build of torch when one is available.",
+        })
+    elif not torch_info.get("cuda"):
+        if torch_info.get("cuda_version"):
+            # A CUDA build that cannot see a GPU is a driver problem, not an
+            # install one, so "reinstall the stack" sends the reader the wrong
+            # way. On Blackwell it is neither: those cards (sm_120) need a CUDA
+            # 12.8+ build, and a wheel compiled for <=12.6 reports the newer
+            # runtime version while refusing the device.
+            sm = nvidia_compute_cap(profile)
+            if sm.startswith("12."):
+                advice = torch_gpu_advice(profile)
+                hints.append({
+                    "for": "full tier on GPU (Blackwell / RTX 50-series)",
+                    "command": advice.get("command", (
+                        "pip install -r requirements-full.txt\n"
+                        "pip install torch torchaudio --upgrade --index-url "
+                        "https://download.pytorch.org/whl/cu130"
+                    )),
+                    "note": (
+                        f"This GPU reports compute capability {sm} (Blackwell), which needs a "
+                        "CUDA 12.8 or newer torch build. The version tag alone does not prove "
+                        "that: a build compiled for CUDA 12.6 or older reports the runtime "
+                        "version but rejects sm_120. Check with "
+                        "'python -c \"import torch; print(torch.cuda.get_arch_list())\"' -- "
+                        "sm_120 must be listed."
+                    ),
+                })
+            else:
+                hints.append({
+                    "for": "full tier on GPU",
+                    "command": "nvidia-smi  # confirm the driver sees the GPU",
+                    "note": (
+                        f"torch is a CUDA {torch_info['cuda_version']} build but cannot reach a "
+                        "GPU. Check the NVIDIA driver is installed and the GPU is visible."
+                    ),
+                })
+        else:
+            advice = torch_gpu_advice(profile)
+            # On Windows and macOS the requirements file reinstalls the same
+            # CPU-only wheel. Offering it here is what made this a loop that
+            # reported success and changed nothing, so name the wheel index.
+            hints.append({
+                "for": "full tier on GPU",
+                "command": advice.get(
+                    "command",
+                    "pip install -r requirements-full.txt --upgrade --force-reinstall",
+                ),
+                "note": advice.get(
+                    "note",
+                    "The installed torch is CPU-only; reinstall to pick up CUDA.",
+                ),
+            })
+
+    if not ort_info.get("gpu"):
+        dml = directml_advice(profile)
+        nvidia = any(
+            (g.get("vendor") or "").lower() == "nvidia" for g in (profile.get("gpu") or [])
+        )
+        if dml and not nvidia:
+            # A non-NVIDIA GPU: requirements-gpu.txt is the CUDA build of
+            # onnxruntime and will never reach it, so lead with DirectML.
+            hints.append({
+                "for": "onnx tiers on GPU (nano / micro / mini)",
+                "command": dml["command"],
+                "note": dml["note"],
+            })
+        else:
+            note = "Swaps onnxruntime for onnxruntime-gpu, which is the same API."
+            if dml:
+                note += (
+                    " On Windows, requirements-directml.txt also works and needs no "
+                    "CUDA toolkit -- useful if the CUDA build will not load."
+                )
+            hints.append({
+                "for": "onnx tiers on GPU (nano / micro / mini)",
+                "command": "pip install -r requirements-gpu.txt",
+                "note": note,
+            })
+
+    # vLLM only helps the full tier, and only with a CUDA GPU to run it on.
+    if tier == "full" and not vllm_info.get("installed") and torch_info.get("cuda"):
+        hints.append({
+            "for": "full tier, faster synthesis (vLLM)",
+            "command": 'pip install "kittenml[vllm]"',
+            "note": (
+                "Upstream measures ~3-4x faster synthesis on a GPU. This is what "
+                "makes voice cloning and the 47-voice set practical."
+            ),
+        })
+    return hints
+
+
 @router.get("/accelerator")
 async def accelerator(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
     """What GPU acceleration is available, and what to install if it is not.
@@ -678,98 +801,7 @@ async def accelerator(x_admin_token: str | None = Header(default=None)) -> dict[
     vllm_info = acc.get("vllm") or {}
     recs = profile.get("recommendations") or {}
 
-    hints: list[dict[str, str]] = []
-    # Every hint below is about making a *present* GPU usable. On a machine with
-    # no GPU at all the runtime is already configured correctly, so suggesting a
-    # CUDA reinstall would send the reader chasing a problem they do not have --
-    # and "check the driver" when there is no GPU is simply wrong.
-    if not profile.get("gpu"):
-        return {
-            "gpu_present": False,
-            "gpus": [],
-            "torch": torch_info,
-            "onnxruntime": ort_info,
-            "vllm": vllm_info,
-            "any_gpu_runtime": bool(acc.get("any_gpu_runtime")),
-            "driver_only_gpus": acc.get("driver_only_gpus") or [],
-            "gpu_seen_but_unusable": bool(acc.get("gpu_seen_but_unusable")),
-            "recommended_device": recs.get("recommended_device"),
-            "device_usable": recs.get("device_usable"),
-            "device_reason": recs.get("device_reason"),
-            "recommended_backend": recs.get("recommended_backend"),
-            "backend_usable": recs.get("backend_usable"),
-            "backend_reason": recs.get("backend_reason"),
-            "active_tier": tier,
-            "hints": [],
-            "current": engine.status,
-        }
-
-    if not torch_info.get("installed"):
-        hints.append({
-            "for": "full tier (KittenTTS 2, torch)",
-            "command": "pip install -r requirements-full.txt",
-            "note": "Installs the CUDA build of torch when one is available.",
-        })
-    elif not torch_info.get("cuda"):
-        # A CUDA build that cannot see a GPU is a driver problem, not an install
-        # one, and telling the user to reinstall would send them the wrong way.
-        if torch_info.get("cuda_version"):
-            # An RTX 50-series card is Blackwell (sm_120), which needs a CUDA 12.8+
-            # wheel. A build whose local tag is older, or whose kernels were
-            # compiled for <=12.6, reports the newer runtime version while refusing
-            # the GPU -- so "check the driver" is the wrong advice and sends the
-            # reader to reinstall drivers that are already correct.
-            sm = _nvidia_compute_cap(profile)
-            needs_blackwell = sm.startswith("12.") if sm else False
-            if needs_blackwell:
-                hints.append({
-                    "for": "full tier on GPU (Blackwell / RTX 50-series)",
-                    "command": (
-                        'pip install torch torchaudio --index-url '
-                        "https://download.pytorch.org/whl/cu128"
-                    ),
-                    "note": (
-                        f"This GPU reports compute capability {sm} (Blackwell), which needs a "
-                        "CUDA 12.8 or newer torch build. The version tag alone does not prove "
-                        "that: a build compiled for CUDA 12.6 or older reports the runtime "
-                        "version but rejects sm_120. Check with "
-                        "'python -c \"import torch; print(torch.cuda.get_arch_list())\"' -- "
-                        "sm_120 must be listed."
-                    ),
-                })
-            else:
-                hints.append({
-                    "for": "full tier on GPU",
-                    "command": "nvidia-smi  # confirm the driver sees the GPU",
-                    "note": (
-                        f"torch is a CUDA {torch_info['cuda_version']} build but cannot reach a GPU. "
-                        "Check the NVIDIA driver is installed and the GPU is visible."
-                    ),
-                })
-        else:
-            hints.append({
-                "for": "full tier on GPU",
-                "command": "pip install -r requirements-full.txt --upgrade --force-reinstall",
-                "note": "The installed torch is CPU-only; reinstall to pick up CUDA.",
-            })
-    if not ort_info.get("cuda"):
-        hints.append({
-            "for": "onnx tiers on GPU (nano / micro / mini)",
-            "command": "pip install -r requirements-gpu.txt",
-            "note": "Swaps onnxruntime for onnxruntime-gpu, which is the same API.",
-        })
-
-    # vLLM is only worth suggesting when the full tier is the one in play and
-    # there is a GPU to run it on; otherwise it is noise.
-    if tier == "full" and not vllm_info.get("installed") and torch_info.get("cuda"):
-        hints.append({
-            "for": "full tier, faster synthesis (vLLM)",
-            "command": 'pip install "kittenml[vllm]"',
-            "note": (
-                "Upstream measures ~3-4x faster synthesis on a GPU. This is what "
-                "makes voice cloning and the 47-voice set practical."
-            ),
-        })
+    hints = accelerator_hints(profile)
 
     return {
         "gpu_present": bool(profile.get("gpu")),

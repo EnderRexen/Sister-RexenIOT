@@ -98,8 +98,8 @@ async def main():
         print(f"\n  nvidia compute capability: {sm or '(none)'}")
         if sm.startswith("12."):
             joined = " ".join(hints)
-            check("Blackwell gets the cu128 wheel advice, not just 'check the driver'",
-                  "cu128" in joined, joined[:160])
+            check("Blackwell gets a CUDA 12.8+ wheel index, not just 'check the driver'",
+                  ("cu130" in joined) or ("cu128" in joined), joined[:160])
             check("Blackwell advice mentions sm_120",
                   "sm_120" in joined, joined[:160])
         else:

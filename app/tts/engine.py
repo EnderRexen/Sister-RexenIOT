@@ -159,6 +159,11 @@ class TTSEngine:
                 "tts.device=cuda requested but %s has no usable CUDA; using auto", runtime
             )
             return None, None
+        # "auto" on an ONNX tier: pass no backend at all rather than "cpu". The
+        # loader then hands onnxruntime an empty provider list, which means "your
+        # default priority order" -- so a DirectML or ROCm build is picked up
+        # automatically. Forcing "cpu" here would pin a DirectML machine to the
+        # CPU and make that install a no-op.
         return None, None
 
     # ------------------------------------------------------------------- model
@@ -303,6 +308,8 @@ class TTSEngine:
                     return "cuda"
                 if "ROCM" in name:
                     return "rocm"
+                if "Dml" in name:
+                    return "directml"
             if active:
                 return "cpu"
         return requested or "cpu"

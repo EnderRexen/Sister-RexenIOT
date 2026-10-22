@@ -193,6 +193,14 @@ REQUIREMENT_SETS: dict[str, dict[str, Any]] = {
         "file": "requirements-gpu.txt",
         "detail": "Replaces the CPU ONNX runtime so the light tiers can use a GPU.",
     },
+    "directml": {
+        "label": "ONNX DirectML runtime",
+        "file": "requirements-directml.txt",
+        "detail": (
+            "Windows only. Reaches any DirectX 12 GPU -- NVIDIA, AMD or Intel -- "
+            "with no CUDA toolkit, so it works where the CUDA build will not."
+        ),
+    },
 }
 
 #: The import each requirement set exists to provide. Checked by importing, not
@@ -257,6 +265,20 @@ def _ort_has_cuda() -> bool:
         return False
 
 
+def _ort_has_directml() -> bool:
+    """True when the installed onnxruntime exposes the DirectML provider.
+
+    Same trap as the CUDA check: ``onnxruntime-directml`` imports as
+    ``onnxruntime``, so only the provider list distinguishes it.
+    """
+    try:
+        import onnxruntime as ort  # noqa: PLC0415
+
+        return "DmlExecutionProvider" in ort.get_available_providers()
+    except Exception:
+        return False
+
+
 def probe_details(key: str) -> dict[str, str]:
     """Why each probe for ``key`` failed, for display. Empty when all pass."""
     _, failures = _probe_set(key)
@@ -281,6 +303,21 @@ def _probe_set(key: str) -> tuple[list[str], dict[str, str]]:
                 "onnxruntime-gpu (CUDA build)": (
                     "onnxruntime imports, but exposes no CUDAExecutionProvider -- "
                     "this is the CPU build."
+                )
+            }
+        except Exception as exc:
+            return ["onnxruntime"], {"onnxruntime": str(exc) or "not importable"}
+
+    if key == "directml":
+        if _ort_has_directml():
+            return [], {}
+        try:
+            import onnxruntime  # noqa: PLC0415  # noqa: F401
+
+            return ["onnxruntime-directml (DirectML build)"], {
+                "onnxruntime-directml (DirectML build)": (
+                    "onnxruntime imports, but exposes no DmlExecutionProvider -- "
+                    "this is the CPU or CUDA build."
                 )
             }
         except Exception as exc:

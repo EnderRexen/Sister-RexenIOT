@@ -7,6 +7,17 @@
 #
 # The hardware scan recommends this tier only when a GPU is present, because on
 # a CPU the ONNX models are faster per character.
+#
+# WINDOWS / macOS: the `torch` this installs is CPU-only. PyPI publishes a
+# CUDA-linked wheel for Linux and a CPU-only wheel for Windows and macOS at the
+# same version number, so this file alone never gives those platforms a usable
+# GPU. After it, replace torch from the CUDA index (and keep this step last):
+#
+#   pip install torch torchaudio --upgrade --index-url https://download.pytorch.org/whl/cu130
+#
+# cu130 carries torch 2.14.1 and ships sm_120 kernels, so it covers RTX 50-series
+# (Blackwell) and older cards. cu128 also has sm_120 but stops at torch 2.11.0.
+# The admin panel's hardware tab prints the exact command for the card it finds.
 
 kittenml==0.9.4
 torch>=2.6

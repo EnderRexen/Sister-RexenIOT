@@ -116,17 +116,44 @@ tier you run.
 
 | Tier family | Runtime | GPU package |
 |---|---|---|
-| nano / micro / mini (ONNX) | onnxruntime | `requirements-gpu.txt` |
-| full (KittenTTS 2) | torch | `requirements-full.txt` |
+| nano / micro / mini (ONNX) | onnxruntime | `requirements-gpu.txt`, or `requirements-directml.txt` on Windows |
+| full (KittenTTS 2) | torch | `requirements-full.txt`, plus a CUDA-index torch on Windows |
 
 `requirements-gpu.txt` installs `onnxruntime-gpu`, a drop-in replacement with the
-same import name and API, so nothing in the code changes. Install it *instead of*
-the CPU package:
+same import name and API, so nothing in the code changes. It needs an **NVIDIA**
+card, because it is the CUDA build. Install it *instead of* the CPU package:
 
 ```bash
 .venv/bin/python -m pip uninstall -y onnxruntime
 .venv/bin/python -m pip install -r requirements-gpu.txt
 ```
+
+On Windows there is a second route that needs no CUDA toolkit and reaches **any**
+DirectX 12 GPU — NVIDIA, AMD or Intel. It is the answer for an AMD or Intel card,
+which `onnxruntime-gpu` cannot help, and for an NVIDIA card whose CUDA build will
+not load:
+
+```bash
+.venv/bin/python -m pip uninstall -y onnxruntime
+.venv/bin/python -m pip install -r requirements-directml.txt
+```
+
+**Windows and the full tier.** PyPI publishes a CUDA-linked `torch` wheel for
+Linux and a **CPU-only** one for Windows and macOS at the same version number. So
+`pip install -r requirements-full.txt` on Windows gives you a torch that cannot
+touch your GPU, and reinstalling it changes nothing. On Windows, replace torch
+from the CUDA index afterwards — keep this step last:
+
+```bash
+.venv\Scripts\python.exe -m pip install -r requirements-full.txt
+.venv\Scripts\python.exe -m pip install torch torchaudio --upgrade --index-url https://download.pytorch.org/whl/cu130
+```
+
+`--index-url` rather than `--extra-index-url` is deliberate: PyPI's torch is a
+newer version than the CUDA index's, so an extra index would lose the resolution
+and quietly give you the CPU wheel back. cu130 carries torch 2.14.1 and ships
+sm_120 kernels, so it covers RTX 50-series (Blackwell) and older cards. The
+Hardware & Models tab prints the exact command for the card it detects.
 
 `tts.device` controls the target:
 

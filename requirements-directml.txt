@@ -1,0 +1,22 @@
+# Sister RexenIOT - GPU acceleration for the ONNX speech tiers on Windows
+#
+# onnxruntime-directml reaches any DirectX 12 GPU -- NVIDIA, AMD or Intel -- with
+# no CUDA toolkit, no vendor-specific wheel, and no driver version to match. That
+# makes it the route that works on a Windows machine where the CUDA build of
+# onnxruntime will not load, and the only GPU route at all for AMD and Intel
+# cards, which onnxruntime-gpu does not support.
+#
+# Like the CUDA build it is a drop-in replacement for onnxruntime: same import
+# name, same API. Install it *instead of* onnxruntime, never alongside it:
+#
+#   pip uninstall -y onnxruntime
+#   pip install -r requirements-directml.txt
+#
+# Windows only -- there is no DirectML wheel for Linux or macOS. The engine
+# selects the provider by itself, so tts.device can stay "auto". If no DirectX 12
+# GPU is usable the speech engine falls back to CPU on its own.
+#
+# This accelerates the ONNX tiers (nano / micro / mini). The full 1.7B tier runs
+# on PyTorch and needs a CUDA wheel index instead; see the admin panel's advice.
+
+onnxruntime-directml>=1.20

@@ -295,6 +295,138 @@ def _gpus() -> list[dict[str, Any]]:
     return seen
 
 
+def _cuda_index_for(compute_cap: str) -> str:
+    """The CUDA wheel index to install torch from.
+
+    ``cu130`` is the current index: it carries torch 2.14.1 and ships sm_120
+    kernels, so it covers Blackwell (RTX 50-series) and older cards alike.
+    ``cu128`` also has sm_120 but tops out at torch 2.11.0, and ``cu126`` and
+    older have no sm_120 kernels at all -- a wheel built from those reports a
+    newer CUDA runtime version and then refuses the device, which is a confusing
+    way to fail.
+    """
+    return "cu130"
+
+
+def _platform_info() -> dict[str, Any]:
+    """The host OS, plus whether its *default* torch wheel can reach a GPU.
+
+    This matters because PyPI publishes a CUDA-linked torch for Linux and a
+    CPU-only one for Windows and macOS at the same version number. So
+    ``pip install torch`` is a GPU install on one platform and not on the others,
+    and any advice phrased as "reinstall the PyTorch stack" is a no-op on two of
+    the three. Recording the distinction here lets the panel name a wheel index
+    instead, which is the only thing that works there.
+    """
+    is_windows = sys.platform == "win32"
+    is_macos = sys.platform == "darwin"
+    return {
+        "system": platform.system(),
+        "release": platform.release(),
+        "machine": platform.machine(),
+        "python": platform.python_version(),
+        "is_windows": is_windows,
+        "is_macos": is_macos,
+        "is_linux": not is_windows and not is_macos,
+        # PyPI's default torch links CUDA on Linux x86_64 only. Elsewhere the same
+        # version installs a CPU-only build, so an index URL is required.
+        "pypi_torch_has_cuda": not is_windows and not is_macos,
+    }
+
+
+def nvidia_compute_cap(profile: dict[str, Any]) -> str:
+    """The compute capability of the first NVIDIA GPU, or "".
+
+    Needed to tell a Blackwell card (sm_120) from an older one, because the wheel
+    index differs and the version tag alone does not reveal it.
+    """
+    for gpu in profile.get("gpu") or []:
+        if (gpu.get("vendor") or "").lower() == "nvidia":
+            return str(gpu.get("compute_capability") or "")
+    return ""
+
+
+def torch_gpu_advice(profile: dict[str, Any]) -> dict[str, str]:
+    """How to get a GPU-capable torch on *this* platform. ``{}`` when moot.
+
+    Split out from the panel so the plan and the accelerator card give the same
+    answer, and so the platform rule lives in one place: a requirements file can
+    only deliver a GPU build on Linux, where PyPI's default wheel is CUDA-linked.
+    On Windows and macOS the same command reinstalls the CPU-only wheel, so the
+    advice has to name the index -- otherwise "reinstall to pick up CUDA" is a
+    loop that reports success and changes nothing.
+    """
+    osinfo = profile.get("os") or _platform_info()
+    if osinfo.get("is_macos"):
+        # No CUDA on macOS at all; torch uses MPS on Apple Silicon, CPU elsewhere.
+        return {}
+
+    sm = nvidia_compute_cap(profile)
+    index = _cuda_index_for(sm)
+    url = f"https://download.pytorch.org/whl/{index}"
+    # `--index-url`, not `--extra-index-url`: PyPI's torch is *newer* than the
+    # CUDA index's (2.14.1 against cu128's 2.11.0), so an extra index loses the
+    # resolution and silently installs the CPU-only wheel again. Restricting the
+    # index makes the CUDA build the only candidate. The cost is that the CUDA
+    # index carries only the torch family, so the rest of the stack has to be
+    # installed in a second step -- which is why the advice is two commands and
+    # not one. ``--upgrade`` keeps a same-version CPU wheel from being left alone.
+    command = (
+        f"pip install -r requirements-full.txt\n"
+        f"pip install torch torchaudio --upgrade --index-url {url}"
+    )
+
+    if osinfo.get("is_windows"):
+        note = (
+            "PyPI's Windows torch wheel is CPU-only, so reinstalling the PyTorch "
+            f"stack cannot enable the GPU -- the index must be named. {index} "
+            + (
+                f"ships sm_120 kernels for this Blackwell card ({sm}) and is the "
+                "current index (torch 2.14.1); cu128 also has sm_120 but stops at "
+                "2.11.0, and cu126 and older refuse the card outright. Needs NVIDIA "
+                "driver 570 or newer."
+                if sm.startswith("12.")
+                else "matches this card's compute capability."
+            )
+            + " Run the two commands in order: the second must come last, or the "
+            "CPU wheel is reinstalled over it."
+        )
+    else:
+        note = (
+            "PyPI's Linux torch wheel is normally CUDA-linked, so the requirements "
+            "install alone may already be a GPU build -- this two-step is for when "
+            f"it is not. {index} is the current index and matches this GPU."
+        )
+    return {"index": index, "url": url, "command": command, "note": note}
+
+
+def directml_advice(profile: dict[str, Any]) -> dict[str, str]:
+    """The vendor-neutral GPU path for the ONNX tiers, where it applies.
+
+    ``onnxruntime-directml`` reaches any GPU on Windows -- NVIDIA, AMD or Intel --
+    through DirectX 12, with no CUDA toolkit and no per-vendor wheel. That makes
+    it the answer for a Windows machine whose GPU torch cannot use, and for AMD
+    and Intel cards that onnxruntime-gpu never supports. Linux and macOS have no
+    DirectML build, so it is Windows-only advice.
+    """
+    if not (profile.get("os") or _platform_info()).get("is_windows"):
+        return {}
+    if not profile.get("gpu"):
+        return {}
+    return {
+        "command": (
+            "pip install -r requirements-directml.txt  "
+            "# and: pip uninstall -y onnxruntime"
+        ),
+        "note": (
+            "DirectML reaches any Windows GPU (NVIDIA, AMD or Intel) through "
+            "DirectX 12 -- no CUDA toolkit, no vendor-specific wheel. The ONNX "
+            "tiers (nano / micro / mini) then run on the GPU, and 'auto' picks it "
+            "up without a config change. The full 1.7B tier still needs torch."
+        ),
+    }
+
+
 def _runtimes() -> dict[str, Any]:
     """Which optional runtimes are importable, so recommendations stay honest."""
     found: dict[str, Any] = {}
@@ -384,6 +516,13 @@ def _accelerators() -> dict[str, Any]:
             "providers": providers,
             "cuda": "CUDAExecutionProvider" in providers,
             "rocm": "ROCMExecutionProvider" in providers,
+            "directml": "DmlExecutionProvider" in providers,
+            # Any GPU-ish execution provider counts as accelerated; the light tiers
+            # only need to know whether ORT can leave the CPU, not by which route.
+            "gpu": any(
+                p in providers for p in ("CUDAExecutionProvider", "ROCMExecutionProvider",
+                                         "DmlExecutionProvider", "TensorrtExecutionProvider")
+            ),
             "device": device,
             "version": getattr(ort, "__version__", None),
         }
@@ -572,9 +711,11 @@ def _pick_device(profile: dict[str, Any], tier: str) -> dict[str, Any]:
     gpu = profile.get("gpu") or []
     acc = profile.get("accelerators") or {}
     torch_cuda = bool((acc.get("torch") or {}).get("cuda"))
-    ort_cuda = bool((acc.get("onnxruntime") or {}).get("cuda"))
-    # The full tier is the torch path; everything else runs through ONNX.
-    usable = torch_cuda if tier == "full" else ort_cuda
+    # The full tier is the torch path, so only CUDA counts there. The ONNX tiers
+    # accept any accelerated provider -- CUDA, ROCm or DirectML -- which is what
+    # makes a non-NVIDIA Windows card a working GPU path rather than a dead end.
+    ort_accel = bool((acc.get("onnxruntime") or {}).get("gpu"))
+    usable = torch_cuda if tier == "full" else ort_accel
 
     if not gpu:
         return {"device": "cpu", "usable": False, "reason": "no GPU detected; CPU is correct"}
@@ -716,7 +857,7 @@ def recommend(profile: dict[str, Any]) -> dict[str, Any]:
 #: different version is discarded rather than read, because a reader that expects
 #: a key the cache predates reports it as missing -- which looks exactly like a
 #: real finding. That has already caused two false readings of this panel.
-PROFILE_VERSION = 3
+PROFILE_VERSION = 4
 
 
 def scan(persist: bool = True) -> dict[str, Any]:
@@ -729,6 +870,7 @@ def scan(persist: bool = True) -> dict[str, Any]:
         "memory": _memory_info(),
         "disk": _disk_info(),
         "gpu": _gpus(),
+        "os": _platform_info(),
         "runtimes": _runtimes(),
         "accelerators": _accelerators(),
     }
@@ -877,13 +1019,30 @@ def plan(profile: dict[str, Any] | None = None, cfg: Any = None) -> dict[str, An
     else:
         providers = ", ".join(ort_info.get("providers") or []) or "none"
         detail = f"{ort_info.get('version')} — CPU only (providers: {providers})"
+        # A GPU is present but the ONNX runtime cannot reach it. Which install
+        # fixes that depends on the vendor and the OS: onnxruntime-gpu needs CUDA,
+        # so it only helps an NVIDIA card, while DirectML reaches any Windows GPU.
+        dml = directml_advice(profile) if has_gpu else {}
+        gpu_command = "pip install -r requirements-gpu.txt"
         if has_gpu:
-            detail += ". Install requirements-gpu.txt to let the light tiers use the GPU."
+            nvidia = any(
+                (g.get("vendor") or "").lower() == "nvidia" for g in real_gpus
+            )
+            if dml and not nvidia:
+                detail += (
+                    ". requirements-gpu.txt needs an NVIDIA card; this GPU is not "
+                    "one, so requirements-directml.txt is the route that works."
+                )
+                gpu_command = dml["command"]
+            else:
+                detail += ". Install requirements-gpu.txt to let the light tiers use the GPU."
+                if dml:
+                    detail += " (requirements-directml.txt also works, and needs no CUDA.)"
         steps.append(_step(
             "onnxruntime", "ONNX runtime",
             status="warn" if has_gpu else "ok",
             actionable=has_gpu,
-            command="pip install -r requirements-gpu.txt" if has_gpu else "",
+            command=gpu_command if has_gpu else "",
             detail=detail,
         ))
 
@@ -911,6 +1070,7 @@ def plan(profile: dict[str, Any] | None = None, cfg: Any = None) -> dict[str, An
             ))
         else:
             detail = f"{torch_info.get('version')} — CPU only"
+            advice = torch_gpu_advice(profile) if has_gpu else {}
             if torch_info.get("cuda_version"):
                 # The confusing case: a CUDA build with nothing to talk to. Say so
                 # plainly, or the reader assumes the GPU is broken.
@@ -918,23 +1078,45 @@ def plan(profile: dict[str, Any] | None = None, cfg: Any = None) -> dict[str, An
                     f" (a CUDA {torch_info['cuda_version']} build, but no GPU is "
                     "reachable from this process)"
                 )
+            elif has_gpu and not advice:
+                # macOS: there is no CUDA build to install, so a reinstall is not
+                # the fix and offering one would send the reader in a circle.
+                detail += ". Apple GPUs use MPS, not CUDA; the ONNX tiers are the GPU path here."
+            # On Windows and macOS the requirements file reinstalls the same
+            # CPU-only wheel, so it is only the right command where PyPI's default
+            # torch is CUDA-linked (Linux).
+            command = (
+                advice.get("command", "pip install -r requirements-full.txt --upgrade --force-reinstall")
+                if has_gpu and advice
+                else "pip install -r requirements-full.txt --upgrade --force-reinstall"
+            )
             steps.append(_step(
                 "torch", "PyTorch (full speech tier)",
                 status="info" if has_gpu else "ok",
                 actionable=has_gpu,
-                command="pip install -r requirements-full.txt --upgrade --force-reinstall" if has_gpu else "",
+                command=command if has_gpu else "",
                 detail=detail,
             ))
     else:
+        advice = torch_gpu_advice(profile) if has_gpu else {}
+        detail = "Not installed — the full 1.7B tier needs it."
+        if not has_gpu:
+            detail += " Only worth it with a GPU."
+        elif advice:
+            # Name the index up front on platforms where the default wheel is
+            # CPU-only; otherwise the plain install silently lands CPU-only and the
+            # next scan reports the same problem.
+            detail += (
+                " On this platform install it from the CUDA wheel index, or the "
+                "default wheel will be CPU-only."
+            )
         steps.append(_step(
             "torch", "PyTorch (full speech tier)",
             status="info" if has_gpu else "ok",
             actionable=True,
-            command="pip install -r requirements-full.txt",
-            detail=(
-                "Not installed — the full 1.7B tier needs it. "
-                + ("Install it to use the GPU." if has_gpu else "Only worth it with a GPU.")
-            ),
+            command=advice.get("command", "pip install -r requirements-full.txt") if advice
+            else "pip install -r requirements-full.txt",
+            detail=detail,
         ))
 
     # ------------------------------------------------------------------- vLLM
