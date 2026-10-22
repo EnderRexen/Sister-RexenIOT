@@ -413,3 +413,27 @@ identifiers, env vars, log names or filenames. The conventions are
 - Secret scan before publishing: no credentials in tracked files or in the
   shipped zip. `.gitignore` already excludes `data/config.json` and the other
   generated state, so those never reach the repo.
+
+## The two Windows launchers are both needed (not duplicates)
+- `start.cmd` -- assumes Python is installed. Uses `py -3` / `python` from PATH,
+  creates a venv, installs into it. Smaller, faster, needs Python 3.10+ present.
+- `start-portable.cmd` -- self-contained. Downloads python-build-standalone into
+  `runtime/python`, keeps all state in the folder, so it runs from a USB stick on
+  a machine with no Python at all. Never asks the user to install Python.
+- They are NOT redundant: one requires a system Python, the other must not.
+  Both ship in the zip. Neither is mentioned in README/SETUP (only
+  `start.cmd`/`start.sh` are) -- the portable pair is effectively undocumented.
+- `scripts/check_launchers.py` statically validates all four + keep-alive.sh.
+
+## Batch-file gotcha that bit twice
+- `.gitattributes` pins `*.cmd` to CRLF and `*.sh` to LF, and the reason is
+  load-bearing: cmd.exe mis-parses LF-only batch (goto/label, parenthesised
+  blocks, for loops fail *silently*), while bash dies on a CRLF shebang.
+- The editor tool writes LF. Any edit to a `.cmd` must be followed by a CRLF
+  re-normalise, or the working tree silently breaks. The zip builder re-asserts
+  CRLF independently, so the shipped zip can be fine while the working tree is
+  broken -- which is exactly what happened.
+- Inside a parenthesised batch block, **every** literal `(` and `)` in an `echo`
+  must be escaped `^( ^)`. An unescaped `)` closes the block early and the rest
+  of the block is mis-parsed. LF-only parsing hides this, so fixing the endings
+  can *reveal* new errors rather than clear them.
