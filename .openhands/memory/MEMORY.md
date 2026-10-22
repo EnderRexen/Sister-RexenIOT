@@ -188,7 +188,7 @@ identifiers, env vars, log names or filenames. The conventions are
   plumbing, not the contract** ŌĆö read the upstream source.
 
 ## Running it
-- Default port is **8060** (all four launchers + `data/config.json` + README).
+- Default port is **8060** (both launchers + `data/config.json` + README).
 - Dev server: `nohup ./.venv/bin/python -m app.main --host 0.0.0.0 --port 8060 --no-browser > /tmp/rexeniot_live.log 2>&1 &`
 - **Keeping the preview link up:** the runtime kills child processes on recycle.
   `scripts/keep-alive.sh` polls the port and restarts the server automatically.
@@ -415,16 +415,16 @@ identifiers, env vars, log names or filenames. The conventions are
   shipped zip. `.gitignore` already excludes `data/config.json` and the other
   generated state, so those never reach the repo.
 
-## The two Windows launchers are both needed (not duplicates)
-- `start.cmd` -- assumes Python is installed. Uses `py -3` / `python` from PATH,
-  creates a venv, installs into it. Smaller, faster, needs Python 3.10+ present.
-- `start-portable.cmd` -- self-contained. Downloads python-build-standalone into
-  `runtime/python`, keeps all state in the folder, so it runs from a USB stick on
-  a machine with no Python at all. Never asks the user to install Python.
-- They are NOT redundant: one requires a system Python, the other must not.
-  Both ship in the zip. Neither is mentioned in README/SETUP (only
-  `start.cmd`/`start.sh` are) -- the portable pair is effectively undocumented.
-- `scripts/check_launchers.py` statically validates all four + keep-alive.sh.
+## Launchers: exactly two, both portable (2026-10-22)
+- `start.cmd` (Windows) and `start.sh` (Linux/macOS) are the only launchers. The
+  old non-portable pair was deleted and the portable pair renamed onto these
+  names. Each prefers a Python 3.10+ already on the machine and otherwise
+  downloads python-build-standalone into `runtime/python`, keeping all state in
+  the folder, so the folder runs from a USB stick on a machine with no Python.
+- The `--portable` flag is gone: every install is portable, so it was always
+  true. bootstrap.py takes no flag for it (it reads `REXENIOT_OFFLINE`).
+- `runtime/` is gitignored and excluded from the source zip.
+- `scripts/check_launchers.py` statically validates both + keep-alive.sh.
 
 ## Batch-file gotcha that bit twice
 - `.gitattributes` pins `*.cmd` to CRLF and `*.sh` to LF, and the reason is
@@ -445,16 +445,15 @@ identifiers, env vars, log names or filenames. The conventions are
   folder); never quote one holding a command with arguments. Enforced by check 9
   in `scripts/check_launchers.py`.
 
-## The launcher pipeline lives in one file (2026-10-22 refactor)
-- All four launchers (`start.cmd`, `start-portable.cmd`, `start.sh`,
-  `start-portable.sh`) are now thin: find a Python, then `exec`
-  `scripts/bootstrap.py`. The launcher *cannot* find its own interpreter for the
-  pipeline, because a machine with no Python cannot run the pipeline at all --
-  that asymmetry is why the split is by concern, not by platform.
-- The four used to carry private copies of the pipeline and drifted: the GPU
-  advice reached `start.cmd`/`start.sh` but never the portable pair, so a
-  portable install with a discrete GPU was told nothing. Nothing compared the
-  four files, so the drift was invisible.
+## The launcher pipeline lives in one file
+- `start.cmd` / `start.sh` are thin: find a Python, then `exec`
+  `scripts/bootstrap.py`. The launcher *cannot* run the pipeline itself, because
+  a machine with no Python cannot run the pipeline at all -- that asymmetry is
+  why the split is by concern, not by platform.
+- The launchers used to carry private copies of the pipeline and drifted: the GPU
+  advice reached `start.cmd`/`start.sh` but never the separate portable pair, so
+  a portable install with a discrete GPU was told nothing. Nothing compared the
+  files, so the drift was invisible. The separate pair is now gone (see above).
 - The GPU advice itself lives in `app/hardware.py` (`torch_gpu_advice`,
   `directml_advice`), because the admin panel reads it too. bootstrap.py *calls*
   it rather than restating it, so there is one definition.
