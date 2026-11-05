@@ -85,9 +85,11 @@ if [ -x "$PY" ]; then
   echo "      using the bundled runtime: $("$PY" --version 2>&1)"
 else
   SYS_PY="$(find_system_python || true)"
-  if [ -n "$SYS_PY" ] && [ "$OFFLINE" != "1" ]; then
-    # A system interpreter keeps the folder small, but the venv must still live
-    # here so the install stays self-contained.
+  # A system interpreter keeps the folder small, but the venv must still live
+  # here so the install stays self-contained. It is used offline too: an
+  # interpreter already on the machine is exactly what offline mode wants, and
+  # refusing it made REXENIOT_OFFLINE=1 fail on a box that had a usable Python.
+  if [ -n "$SYS_PY" ]; then
     echo "      found system python: $SYS_PY ($("$SYS_PY" --version 2>&1))"
     USE_PY="$SYS_PY"
   else
