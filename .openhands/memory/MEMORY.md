@@ -8,6 +8,33 @@ vanilla JS frontend, KittenTTS for speech.
 - Build with `nix build .#rexeniot` (tiers: `rexeniot`, `rexeniot-stt`,
   `rexeniot-full`). `checks.<system>.rexeniot-runs` executes the wrapper with
   `--help`; a build alone does not prove the wrapper can start.
+- **`flake.lock` MUST be committed.** Without it every consumer fails with
+  "cannot write modified lock file of flake ..." and the message misleadingly
+  blames the *caller's* command. Nix cannot pin inputs and refuses to write the
+  lock inside the store. It was missing for several commits. Generate with
+  `nix flake lock`, then commit.
+- **VERIFIED WORKING 2026-11-07** (first real evaluation, in this sandbox):
+  `nix build github:EnderRexen/Sister-RexenIOT/nix-packaging#rexeniot` succeeds,
+  `checks.x86_64-linux.rexeniot-runs` passes, and a consumer flake importing
+  `nixosModules.default` renders a correct systemd unit.
+- **Nix CAN be installed in this sandbox** (root, single-user) even though
+  `nix-portable` does not work. `curl -sL https://nixos.org/nix/install | sudo sh
+  -s -- --no-daemon --yes`. Two required fixes, both of which surface as
+  confusing errors:
+  - **`/nix` is wiped by a container restart** -- reinstall afterwards.
+  - `error: the group 'nixbld' ... does not exist` ->
+    `groupadd -r nixbld` and `useradd -r -g nixbld -G nixbld nixbld{1..4}`.
+  - `nix` **segfaults as the unprivileged user**; run it under `sudo` with
+    `/root/.config/nix/nix.conf` holding `sandbox = false` and
+    `experimental-features = nix-command flakes`.
+  - Builds are long (nixpkgs + a Python env); use `--no-link --print-out-paths`
+    in the background and poll a log file.
+- **Do NOT `nix eval` the whole `systemd.services.<name>` attrset as JSON.** It
+  fails with `The option 'systemd.services.rexeniot.startLimitBurst' was
+  accessed but has no value defined`, which looks like a module bug but is not --
+  that option has no default and is only resolved by the unit-rendering path.
+  Evaluate `config.systemd.units."rexeniot.service".text` instead, which is also
+  what the user actually gets.
 - **`callPackage` injects top-level attrs for any unsupplied formal**, so a
   formal named `src` picks up nixpkgs' throwing alias
   (`aliases.nix: src = throw "renamed to simple-revision-control"`, added
