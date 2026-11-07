@@ -9,6 +9,11 @@
   makeWrapper,
   writeShellScript,
   coreutils,
+  # nixpkgs exports this binary as `espeak` (all-packages.nix: `espeak =
+  # espeak-ng;`). `espeak-ng` is only a let-bound name, not a top-level
+  # attribute, so a formal spelled `espeak-ng` would fail with "called without
+  # required argument".
+  espeak,
   # Named explicitly rather than relying on implicit scoping, so a caller that
   # forgets it fails loudly instead of silently picking up nixpkgs' python3.
   pythonEnv,
@@ -38,8 +43,10 @@ let
     set -eu
 
     export REXENIOT_HOME="''${REXENIOT_HOME:-''${XDG_DATA_HOME:-$HOME/.local/share}/rexeniot}"
-    mkdir -p "$REXENIOT_HOME"
+    mkdir -p "$REXENIOT_HOME/data"
 
+    # Only link the assets we actually packaged. Copying over an operator's own
+    # web/ would silently discard local customisations.
     if [ -L "$REXENIOT_HOME/web" ] || [ ! -e "$REXENIOT_HOME/web" ]; then
       ln -sfn "$REXENIOT_WEB_DIR" "$REXENIOT_HOME/web"
     fi
@@ -52,7 +59,8 @@ stdenv.mkDerivation {
 
   # Only the parts the derivation actually installs. The repo carries a large
   # .venv and a runtime data/ directory; copying those into the store would be
-  # slow and pointless. .git and result are excluded for the same reason.
+  # slow and pointless. data/ is runtime state -- personalities, skills and
+  # voice profiles all have BUILTIN defaults in code and are regenerated.
   src = lib.cleanSourceWith {
     src = srcDir;
     filter =
@@ -80,7 +88,7 @@ stdenv.mkDerivation {
     cp README.md $out/share/rexeniot/README.md 2>/dev/null || true
 
     makeWrapper ${launcher} $out/bin/rexeniot \
-      --prefix PATH : ${lib.makeBinPath [ coreutils ]} \
+      --prefix PATH : ${lib.makeBinPath [ coreutils espeak ]} \
       --set REXENIOT_WEB_DIR $out/share/rexeniot/web
 
     runHook postInstall

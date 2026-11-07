@@ -132,9 +132,24 @@
         }
       );
 
-      checks = forAllSystems (system: {
-        inherit (self.packages.${system}) rexeniot;
-      });
+      checks = forAllSystems (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        {
+          # `nix build` proves the derivation builds; it does not prove the
+          # wrapper can start. Running the entry point catches a broken
+          # interpreter path or a missing state directory, which a build never
+          # surfaces. --help exercises the full import graph and exits without
+          # touching the network or loading a model.
+          rexeniot-runs = pkgs.runCommand "rexeniot-runs-check" { } ''
+            export HOME=$TMPDIR
+            ${self.packages.${system}.rexeniot}/bin/rexeniot --help > $out
+            grep -q "Sister RexenIOT" $out
+          '';
+        }
+      );
 
       formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixpkgs-fmt);
     };
