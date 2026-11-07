@@ -14,9 +14,15 @@
   pythonEnv,
   pname ? "rexeniot",
   version ? "0.1.0",
-  # Last on purpose: a path literal directly before a comma trips the
-  # tree-sitter Nix grammar, and `src` is the only path default here.
-  src ? ./..
+  # `srcDir`, not `src`: nixpkgs carries a top-level `src` attribute (a throwing
+  # alias for simple-revision-control), and callPackage auto-injects top-level
+  # attributes for any formal the caller does not supply. Naming this `src`
+  # therefore makes a bare `callPackage ./nix/package.nix { }` fail before the
+  # default is ever consulted. `srcDir` exists nowhere in nixpkgs.
+  #
+  # Deliberately the last formal and with no trailing comma: a path literal
+  # immediately followed by a comma is rejected by the tree-sitter Nix grammar.
+  srcDir ? ./..
 }:
 
 let
@@ -42,7 +48,24 @@ let
   '';
 in
 stdenv.mkDerivation {
-  inherit pname version src;
+  inherit pname version;
+
+  # Only the parts the derivation actually installs. The repo carries a large
+  # .venv and a runtime data/ directory; copying those into the store would be
+  # slow and pointless. .git and result are excluded for the same reason.
+  src = lib.cleanSourceWith {
+    src = srcDir;
+    filter =
+      path: _type:
+      !(lib.elem (baseNameOf (toString path)) [
+        ".git"
+        ".venv"
+        ".direnv"
+        "data"
+        "__pycache__"
+        "result"
+      ]);
+  };
 
   nativeBuildInputs = [ makeWrapper ];
 
