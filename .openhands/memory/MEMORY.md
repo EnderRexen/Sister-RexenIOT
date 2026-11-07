@@ -40,6 +40,24 @@ vanilla JS frontend, KittenTTS for speech.
   (`aliases.nix: src = throw "renamed to simple-revision-control"`, added
   2025-11-19) and the `? ./..` default is never reached. Use `srcDir`. The
   error text ("falsely constructed overlay") points nowhere near the cause.
+- **`soundfile` needs `libsndfile` on `LD_LIBRARY_PATH`.** KittenTTS pulls in
+  `soundfile`, which `dlopen`s `libsndfile.so` at import; uv2nix builds a Python
+  env whose closure does not include it. Symptom is
+  `OSError: cannot load library 'libsndfile.so'` during TTS warm-up, which reads
+  like a broken model download. Fixed in `nix/package.nix` with
+  `--prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ libsndfile ]}`. Verified
+  with `--prepare-tts` (loads the 8-voice model, synthesises real audio).
+  **A `nix build` alone does NOT catch this** -- it only fails at runtime.
+- NixOS config dir here (`.../53acd20a90df47a6b4e9eb576304b200/nixos/`) holds
+  only `configuration.nix`, `fw.nix`, `ls.nix`, `lscfg.yaml`. The referenced
+  `./modules/openhands.nix` and `./modules/docker.nix` are **not** in this
+  workspace, so the OpenHands container side cannot be inspected from here.
+- Local-LLM path (already live-verified by the user): firewall opens 8080 on
+  `docker0` only; container reaches it via
+  `host.docker.internal` -> `--add-host host.docker.internal:host-gateway`;
+  llama-swap `--jinja` is load-bearing (without it tool calls return HTTP 500
+  `tools param requires --jinja flag`). The OpenHands-side LLM profile is UI
+  state, not Nix.
 - **`pkgs/top-level/all-packages.nix` does NOT list `by-name` packages.** A grep
   miss there means "not confirmed", not "absent"  `espeak-ng` is a by-name
   package (`pkgs/by-name/es/espeak-ng`) and IS a valid attribute. Confirm with
