@@ -1,4 +1,4 @@
-# Project memory ŌĆö Sister RexenIOT
+# Project memory ÅÄÃ¶ Sister RexenIOT
 
 Sister RexenIOT: local-first home-assistant web app, Python FastAPI backend +
 vanilla JS frontend, KittenTTS for speech.
@@ -14,7 +14,7 @@ vanilla JS frontend, KittenTTS for speech.
   2025-11-19) and the `? ./..` default is never reached. Use `srcDir`. The
   error text ("falsely constructed overlay") points nowhere near the cause.
 - **`pkgs/top-level/all-packages.nix` does NOT list `by-name` packages.** A grep
-  miss there means "not confirmed", not "absent" � `espeak-ng` is a by-name
+  miss there means "not confirmed", not "absent"  `espeak-ng` is a by-name
   package (`pkgs/by-name/es/espeak-ng`) and IS a valid attribute. Confirm with
   `GET /repos/NixOS/nixpkgs/contents/pkgs/by-name/<2-letter-prefix>/<name>`.
 - `nix-portable` does NOT work in this sandbox. Validate `.nix` syntax with
@@ -26,12 +26,12 @@ vanilla JS frontend, KittenTTS for speech.
   `data/config.json` on **every** start with `jq -s '.[0] * .[1]'`. Recursive
   merge, so operator edits (temperature, voice, wake words) survive while those
   three stay authoritative. Nulls are filtered from the seed because
-  `LLMConfig` types `base_url`/`model` as `str` � a literal `null` fails
+  `LLMConfig` types `base_url`/`model` as `str`  a literal `null` fails
   validation and the app silently falls back to defaults.
 - **`ProtectSystem = "strict"` makes everything read-only**, so a `modelsDir`
   outside the state dir needs `ReadWritePaths`, and a `/run/media` drive needs
   `unitConfig.RequiresMountsFor` or the symlink lands on an unmounted path.
-- **A DynamicUser cannot read a user-owned drive** (unmapped uid) � the same
+- **A DynamicUser cannot read a user-owned drive** (unmapped uid)  the same
   wall llama-swap hits. `services.rexeniot.user = "ender"` switches to a real
   user via `DynamicUser = lib.mkForce false`.
 - The launcher pins `HF_HOME` and `XDG_CACHE_HOME` under `REXENIOT_HOME`, since
@@ -74,7 +74,7 @@ vanilla JS frontend, KittenTTS for speech.
 - The model list is rendered from **two** endpoints: `recommendations.models` in
   the scan/`/hardware` payload, and `catalog` from `/admin/models`. `renderModels`
   reads `fits` / `blockers` / `requirements` / `downloaded` / `active` /
-  `prerequisites` — annotate **both** paths (`_catalog_view`, `_with_model_state`)
+  `prerequisites` â annotate **both** paths (`_catalog_view`, `_with_model_state`)
   or a badge shows on one and not the other.
 - `ALL_MODELS` is the raw catalog and has none of those fields. Serving it directly
   is what disabled every Download button.
@@ -85,12 +85,12 @@ vanilla JS frontend, KittenTTS for speech.
 - **The requirement field has two spellings.** The catalog says `requires`;
   `hardware.recommend` renames it to `requirements` (see `app/hardware.py`, the
   scoring loop). `prerequisites()` reads both, because reading only `requires`
-  made the scan path — the list the panel actually renders — report every tier as
+  made the scan path â the list the panel actually renders â report every tier as
   needing nothing, so the PyTorch install was never offered.
 - `/admin/models/load` refuses with 409 when prerequisites are unmet, naming the
   missing module and the pip command. Every other load path (warm-up, synthesize,
   config apply) goes through `TTSEngine._load_hint`, which derives the stack from
-  the **model tier** rather than the error text — a broken install can raise
+  the **model tier** rather than the error text â a broken install can raise
   something that never names the module.
 - **A present-but-unimportable package is `broken`, not `missing`.** The fix
   differs: reinstall (`--force-reinstall`) vs install. Report them separately, or
@@ -105,14 +105,14 @@ vanilla JS frontend, KittenTTS for speech.
   `onnxruntime-gpu` share an import name, so the GPU set looked satisfied on a
   CPU-only box; `missing_for("gpu")` checks `CUDAExecutionProvider` instead. Same
   trap as the phonemiser (bundled wheel, not on `PATH`) and the profile cache.
-  Probe by **importing**, which runs the package's own initialisation — the only
-  honest test — and cache the result briefly (torch alone takes ~1 s).
+  Probe by **importing**, which runs the package's own initialisation â the only
+  honest test â and cache the result briefly (torch alone takes ~1 s).
 - `admin.js` is `<script type="module">`: its functions are **not** global, so UI
   tests must intercept `window.fetch` rather than call `renderModels` directly.
 - **Test against the shipped archive, not the dev tree.** `/admin/models` scans on
   first call because a fresh install has no cached profile; without it every entry
   lacked `fits` and every Download button was disabled. The live box cannot
-  reproduce first-run bugs — it has accumulated state. Extract
+  reproduce first-run bugs â it has accumulated state. Extract
   `web/download/SisterRexenIOT.zip` to a temp dir and boot with
   `REXENIOT_HOME=<tmp>` (`scripts/test_fresh_install_models.py`).
 - Kill stray test servers by PID from `ps aux | grep "[u]vicorn"`. `ss -ltnp`
@@ -146,13 +146,13 @@ vanilla JS frontend, KittenTTS for speech.
   `not profile.get("gpu")`.
 - **The local version tag is a build tag, not a capability.** `+cu130` is compiled
   in; it says nothing about whether a GPU is reachable. Print it labelled as a
-  build (`2.14.1+cu130 (CUDA 13.0 build) · CPU only`) or the card contradicts
+  build (`2.14.1+cu130 (CUDA 13.0 build) Â· CPU only`) or the card contradicts
   itself and reads as a bug in the panel.
 - **RTX 50-series is Blackwell (sm_120) and needs a CUDA 12.8+ wheel.** "Check the
   driver" is wrong advice there: the driver can be perfect and the wheel still
   rejects the card. `_nvidia_compute_cap()` reads `compute_capability` off the
   profile and emits `--index-url https://download.pytorch.org/whl/cu128`. Keep
-  that URL in the hint only — never in the `requirements*.txt` files.
+  that URL in the hint only â never in the `requirements*.txt` files.
 - `_nvidia_driver_only()` reads `/proc/driver/nvidia/version` and `/dev/nvidia*`
   to distinguish "no GPU" from "GPU the runtimes cannot reach". `torch.cuda` also
   gets a real `torch.zeros(8, device="cuda")` allocation, because
@@ -178,24 +178,24 @@ vanilla JS frontend, KittenTTS for speech.
 - UI rule: "in use" badge only when actually in effect, "selected" otherwise;
   Apply disabled when nothing to apply; Delete disabled for built-ins.
 
-**Naming:** the project has been rebranded twice ŌĆö first off its original codename,
+**Naming:** the project has been rebranded twice ÅÄÃ¶ first off its original codename,
 then to add the `IOT` suffix. Keep both old forms out of the codebase entirely: no
 identifiers, env vars, log names or filenames. The conventions are
 `rexeniot` (code/env), `RexenIOT` (display), `REXENIOT_` (env vars),
 `Sister RexenIOT` (full name).
 - A `grep -ri` for the *original* codename still hits
-  `data/models/blobs/.../*` ŌĆö that is the HuggingFace tokenizer vocabulary
-  (`"─ĀJarvis": 98520`), third-party data, not ours. `data/models/` is excluded from
+  `data/models/blobs/.../*` ÅÄÃ¶ that is the HuggingFace tokenizer vocabulary
+  (`"âÄJarvis": 98520`), third-party data, not ours. `data/models/` is excluded from
   the source zip, so it does not ship. Do not "fix" it.
 
 ## Layout
-- `app/` ŌĆö FastAPI backend. `main.py`, `config.py`, `hardware.py`,
+- `app/` ÅÄÃ¶ FastAPI backend. `main.py`, `config.py`, `hardware.py`,
   `model_catalog.py`, `personalities.py`, `skills.py`, `routing.py`, `llm/`,
   `tts/`, `routers/`.
-- `web/` ŌĆö static frontend served directly: `index.html`, `admin.html`,
+- `web/` ÅÄÃ¶ static frontend served directly: `index.html`, `admin.html`,
   `css/style.css`, `css/admin.css`, `js/app.js`, `js/osk.js`, `js/admin.js`.
-- `scripts/` ŌĆö Playwright test/probe scripts, run with `./.venv/bin/python`.
-- `data/` ŌĆö config.json, personalities.json, skills.json, hardware_profile.json.
+- `scripts/` ÅÄÃ¶ Playwright test/probe scripts, run with `./.venv/bin/python`.
+- `data/` ÅÄÃ¶ config.json, personalities.json, skills.json, hardware_profile.json.
 
 ## Skills system
 - `app/skills.py` mirrors `personalities.py`: JSON store, built-ins re-seeded on
@@ -207,7 +207,7 @@ identifiers, env vars, log names or filenames. The conventions are
   `agent.usable_tools(cfg)` filters them from both the prompt and the `tools=`
   array. A tool no skill claims is still offered, so the all-enabled default
   matches pre-skills behaviour.
-- `provider_field` makes a skill dormant until configured ŌĆö `alexa` uses
+- `provider_field` makes a skill dormant until configured ÅÄÃ¶ `alexa` uses
   `alexa_provider`, so its 5 tools never reach the model on an unconfigured box.
 
 ## Alexa integration
@@ -216,26 +216,26 @@ identifiers, env vars, log names or filenames. The conventions are
 - Three providers with deliberately unequal reach, so tools *refuse with an
   explanation* rather than pretending: `voicemonkey` (hosted HTTP, announce +
   routines), `alexacli` (local CLI, the only route to a live command and a reply
-  ŌĆö refresh token ~2 weeks), `home_assistant` (Alexa Media Player, announce only).
+  ÅÄÃ¶ refresh token ~2 weeks), `home_assistant` (Alexa Media Player, announce only).
 - Tools: `alexa_devices`, `alexa_speak` (also `announce: true` to broadcast),
   `alexa_command`, `alexa_ask`, `alexa_routine`. Env: `ALEXA_PROVIDER`,
   `VOICEMONKEY_TOKEN`, `ALEXACLI_PATH`, `ALEXACLI_DEVICE`.
   `voicemonkey_token` is masked in `public_view`.
 - **The alexacli contract, learned the hard way** (see `2026-10-16.md`): `-d
   <device>` is *required* for speak/command/ask; output is wrapped as
-  `{"success":ŌĆ”,"data"/"message":ŌĆ”}`; `routine list/run` is WIP upstream; install
+  `{"success":ÅÄâ,"data"/"message":ÅÄâ}`; `routine list/run` is WIP upstream; install
   is `brew install buddyh/tap/alexacli`. **A stand-in CLI I write myself proves
-  plumbing, not the contract** ŌĆö read the upstream source.
+  plumbing, not the contract** ÅÄÃ¶ read the upstream source.
 
 ## Running it
 - Default port is **8060** (both launchers + `data/config.json` + README).
 - Dev server: `nohup ./.venv/bin/python -m app.main --host 0.0.0.0 --port 8060 --no-browser > /tmp/rexeniot_live.log 2>&1 &`
 - **Keeping the preview link up:** the runtime kills child processes on recycle.
   `scripts/keep-alive.sh` polls the port and restarts the server automatically.
-  It does not itself survive a container restart ŌĆö relaunch it after a recycle.
+  It does not itself survive a container restart ÅÄÃ¶ relaunch it after a recycle.
   If the link 502s, `cat /proc/uptime` (small value = container restarted).
 - **To give her a real brain in the sandbox** (no Ollama/LM Studio): run
-  `llama-server` from llama.cpp in `/workspace/.llm` (NOT `/tmp` ŌĆö a recycle wipes
+  `llama-server` from llama.cpp in `/workspace/.llm` (NOT `/tmp` ÅÄÃ¶ a recycle wipes
   it) on port 8080 with `--alias qwen3:8`, which matches the shipped config with no
   admin edit. Recipe in `2026-10-16.md`.
 - Public URL: https://work-1-dsytpcehntqnlxzx.prod-runtime.all-hands.dev/ (port 12000)
@@ -255,7 +255,7 @@ identifiers, env vars, log names or filenames. The conventions are
 - `.venv/bin/python` is the app interpreter. Scripts that `import app` need
   `PYTHONPATH=.` (e.g. `PYTHONPATH=. ./.venv/bin/python scripts/foo.py`).
 - `scripts/test_*.py` and `scripts/audit_pages.py` default to port **8060**, but
-  the live demo runs on 12000 ŌĆö pass the URL or they refuse the connection.
+  the live demo runs on 12000 ÅÄÃ¶ pass the URL or they refuse the connection.
 - **Cold start is ~11s** (KittenTTS loading). Scripts using
   `wait_until="networkidle"` time out on a cold server; warm it with a curl first.
 - The sandbox recycles often, killing the server and wiping `/tmp`. It also drops
@@ -269,14 +269,14 @@ identifiers, env vars, log names or filenames. The conventions are
   `page.mouse.wheel()` and overflow with `scrollWidth - clientWidth`.
 - `style.css` locks the window for the chat HUD. `admin.html` loads style.css
   *and* admin.css, so `admin.css` re-enables window scrolling. admin.css is
-  admin-only ŌĆö check that isolation when editing those rules.
+  admin-only ÅÄÃ¶ check that isolation when editing those rules.
 - `1fr` is `minmax(auto, 1fr)`; `auto` floors a grid track at the widest child's
   min-content width. Use `minmax(0, 1fr)` in any single-column media override.
 - Flex rows holding buttons/long values need `flex-wrap: wrap`, plus
   `min-width: 0` + `overflow-wrap: anywhere` on long values (paths, model ids).
 - To grow a touch target without moving it visually, add
   `::after { position:absolute; inset:-Npx }`. Verify with
-  `document.elementFromPoint` ŌĆö bounding boxes under-report the real hit area.
+  `document.elementFromPoint` ÅÄÃ¶ bounding boxes under-report the real hit area.
 - `app/hardware.py` `cached()` re-derives recommendations on every read. Persisting
   the whole profile (facts *and* derived recs) made catalog edits invisible until a
   manual rescan. Only cache facts; derive the rest on read.
@@ -287,7 +287,7 @@ identifiers, env vars, log names or filenames. The conventions are
   (one letter per word; two letters for a single word). A computed field is what
   makes it ride along in every `model_dump()`, so no route needed changing. The
   admin edits the raw `initials`; the client renders `avatar`.
-- **`tts.device=auto` correctly defers to the library** — it passes neither
+- **`tts.device=auto` correctly defers to the library** â it passes neither
   `device` nor `backend`. Do not "fix" this into probing for CUDA and passing it
   explicitly. Both families are already GPU-aware: the torch loader picks `cuda`
   when `torch.cuda.is_available()` (`kittentts2/model.py:100`), and the ONNX
@@ -295,12 +295,12 @@ identifiers, env vars, log names or filenames. The conventions are
   "use all available providers in default precedence"
   (`kittentts_legacy/onnx_model.py:53-65`). An earlier session wrongly "fixed"
   this and had to revert it. *Unverified:* that `providers=[]` reading comes from
-  onnxruntime's source, not a measurement — no CUDA provider exists here to
+  onnxruntime's source, not a measurement â no CUDA provider exists here to
   distinguish the paths. `scripts/test_tts_device.py` pins the current contract.
 - **`data/config.json` is gitignored, so it is NOT shipped.** A fresh install
   generates it from the Pydantic schema defaults in `app/config.py`
   (`TTSConfig.model_id` = `KittenML/kitten-tts-mini-0.8`, the ONNX tier). Reading
-  this sandbox's config as the product default was a real mistake — its
+  this sandbox's config as the product default was a real mistake â its
   `model_id: kitten-tts-2` was written by an earlier `hardware/apply` call.
 - **`/api/admin/hardware/apply` loads the model *before* persisting it.** It used
   to call `config.update()` first and only log a load failure, which permanently
@@ -320,11 +320,11 @@ identifiers, env vars, log names or filenames. The conventions are
   Bella/Jasper/Luna/Bruno/Rosie/Hugo/Kiki/Leo onto `expr-voice-N-m/f`, and
   `_prepare_inputs` resolves them before validating. `BASE_VOICES` in
   `app/tts/engine.py` matches the list exactly. The ONNX `generate(text, voice,
-  speed)` signature we call is correct — but note the vendor's *default* voice is
+  speed)` signature we call is correct â but note the vendor's *default* voice is
   `expr-voice-5-m`, so passing a bogus name raises rather than silently
   defaulting; the engine pre-validates against `self._voices` first.
 - **Personality voices are all valid** (verified against the loaded engine).
-  Do not "fix" Kiki — it is a real vendor alias, and it was already correct.
+  Do not "fix" Kiki â it is a real vendor alias, and it was already correct.
 - **`data/` is runtime state, not shipped defaults.** Config is generated from
   the Pydantic schema; `data/config.json` is gitignored. Checking this sandbox's
   file to infer product defaults produced a false bug report once already.
@@ -349,7 +349,7 @@ identifiers, env vars, log names or filenames. The conventions are
 - **torch cannot be trimmed: it preloads all 16 CUDA libs with `required=True`**
   (`torch/__init__.py::_preload_cuda_deps`). Removing `nvidia/*` breaks `import
   torch` even for CPU-only use. `triton` (897MB) is only an optional torch dep
-  and *can* be removed safely — verified torch, transformers and kittenml import
+  and *can* be removed safely â verified torch, transformers and kittenml import
   and matmul fine without it.
 - **Browser TTS fallback does not exist yet.** `web/js/app.js::speak()` only
   POSTs `/api/speak` and toasts on failure; there is no `speechSynthesis` path
@@ -360,14 +360,14 @@ identifiers, env vars, log names or filenames. The conventions are
 - `_caveat_reason()` in `hardware.py` classifies a failure reason as advice vs a
   blocker. A reason containing "not installed yet" or "spills to RAM" is a
   caveat, not a blocker. Use it instead of inline string checks.
-- Qwen3.8 ships **only at 27B** (18 GB, `qwen3.8:27b`) ŌĆö there is no small tag.
+- Qwen3.8 ships **only at 27B** (18 GB, `qwen3.8:27b`) ÅÄÃ¶ there is no small tag.
   On a 12 GB card it partly offloads to system RAM, which is why 32 GB is the
   recommended floor. `qwen3:8b` is the fast fully-resident alternative.
 - Layout anchors toasts via a `--dock-h` CSS var measured in
   `trackDockHeight()` (app.js). Prevents the persistent `#audio-hint` toast from
   covering the Send button.
 - On-screen keyboard (`web/js/osk.js`) is the "CD-drive" tray: outer `.osk` is a
-  clipped grid slot animating `grid-template-rows` 0frŌåÆ1fr, inner `.osk-tray`
+  clipped grid slot animating `grid-template-rows` 0frÅÃ¥Ã1fr, inner `.osk-tray`
   slides via `translateY`. Both are needed or the slide collapses into one frame.
   `setVisible(false)` delays `panel.hidden = true` ~540 ms so the tuck plays.
 - The soft keyboard tracks its own caret and blurs the field on coarse pointers
@@ -404,26 +404,26 @@ identifiers, env vars, log names or filenames. The conventions are
   `admin.hardware.scan` also rebinds `hardware.scan`. Capture the original first
   or a fake that calls it recurses forever.
 - **Driving a chat turn from Playwright:** Enter in `#input` does submit and POSTs
-  `/api/chat/stream`. Wait on `#btn-send.disabled` trueŌåÆfalse; a tool-calling turn
-  takes 30ŌĆō90s on 4 CPU, so a 120s timeout is too short. `window.state` is not
+  `/api/chat/stream`. Wait on `#btn-send.disabled` trueÅÃ¥Ãfalse; a tool-calling turn
+  takes 30ÅÄÅ90s on 4 CPU, so a 120s timeout is too short. `window.state` is not
   global. Assert the avatar via `#messages .msg.assistant .avatar` (`.brand-mark`
   is an SVG and raises "Node is not an HTMLElement").
 - Playwright browsers include firefox and webkit, not just chromium.
-  `playwright install` alone fails on missing system libs ŌĆö run
+  `playwright install` alone fails on missing system libs ÅÄÃ¶ run
   `playwright install-deps firefox webkit` first (no root needed, uid 10001).
-- Verified 3 engines ├Ś 8 viewports (320 ŌåÆ 4K wall 3840├Ś2160) ├Ś 8 pages/tabs:
+- Verified 3 engines âÅ 8 viewports (320 ÅÃ¥Ã 4K wall 3840âÅ2160) âÅ 8 pages/tabs:
   0 errors, 0 overflow.
 
 ## Compatibility / large screens
 - `style.css` has fallback layers, because a missing feature drops the whole rule:
-  - `@supports not (height: 100dvh)` ŌåÆ `--vh` set by `trackViewportHeight()` (app.js).
-  - `@supports not (background: color-mix(...))` ŌåÆ flat-palette overrides covering
+  - `@supports not (height: 100dvh)` ÅÃ¥Ã `--vh` set by `trackViewportHeight()` (app.js).
+  - `@supports not (background: color-mix(...))` ÅÃ¥Ã flat-palette overrides covering
     all 19 `color-mix` uses; without it panels render transparent on pre-Chrome-111
     / Safari-16.2 / Firefox-113.
-  - `@media (prefers-reduced-transparency: reduce)` ŌåÆ opaque bars.
+  - `@media (prefers-reduced-transparency: reduce)` ÅÃ¥Ã opaque bars.
   - 10-foot tiers at 1600px/2400px + `env(safe-area-inset-*)` for TV overscan.
 - Full-screen button (`#btn-fullscreen`, beside the OSK toggle) hides itself when
-  the Fullscreen API is absent ŌĆö iOS Safari has none for elements.
+  the Fullscreen API is absent ÅÄÃ¶ iOS Safari has none for elements.
 - **The on-screen keyboard has no sound.** The slide is CSS
   (`grid-template-rows` + `translateY`); the "stop" is `.osk-key` entrance
   animation; the click is `:active` scaling. The only AudioContext is the reply
@@ -432,10 +432,24 @@ identifiers, env vars, log names or filenames. The conventions are
 ## Publishing / GitHub (learned the hard way)
 - The `GITHUB_TOKEN` in this sandbox is a **GitHub App installation token**
   (`ghu_`), not a PAT. It authenticates as `EnderRexen` but **cannot create
-  repositories** (`CreateRepository` denied on both REST and GraphQL), and
-  `GET /user/repos` returns 0. `gh repo create` fails identically. Pushing is
-  blocked too: git falls back to an interactive username prompt, so use
-  `GIT_TERMINAL_PROMPT=0` to fail fast rather than hang.
+  repositories**: `gh repo create` fails with GraphQL `CreateRepository`
+  denied, and `POST /user/repos` returns "Resource not accessible by
+  integration". `GET /user/repos?affiliation=owner` returns 0.
+- **CORRECTED 2026-11-07: push credentials ARE configured and working.** The
+  earlier "no credential helper / falls back to an interactive prompt" note was
+  wrong. `~/.gitconfig` carries a URL-scoped
+  `[credential "https://github.com"] helper = !/usr/bin/gh auth git-credential`.
+  **Trap:** `git config --global --get-all credential.helper` prints nothing,
+  because the helper is only bound inside that URL scope. Verify with
+  `printf 'protocol=https\nhost=github.com\n\n' | gh auth git-credential get`
+  (yields `username=x-access-token`). `gh` IS installed at `/usr/bin/gh`, and
+  `gh auth setup-git` is idempotent.
+- The OpenHands Cloud GitHub App is **`openhands-ai`** (owner `All-Hands-AI`):
+  https://github.com/apps/openhands-ai/installations/new. Decoys that do
+  nothing: `openhands-dev` (user `hieptl`), `openhands-app` (user `rpeter`).
+- **No browser MCP is connected** here ("No browser is connected"), so the
+  agent cannot drive the GitHub UI — a human must create the repo and install
+  the app. Blocked push therefore needs the user, not a retry.
 - Consequence: an agent session can commit locally but **cannot publish a new
   repo**. Ask the user to create the empty repo on GitHub first, then push to it.
 - The repo is prepared for that: branch renamed `master` -> `main`, origin set to
