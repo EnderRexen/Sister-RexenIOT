@@ -448,11 +448,17 @@ during development (`test_tts_device.py`, `test_recommend.py`,
 
 Most of those need the app already running on `127.0.0.1:8070`; without it they
 fail with a connection error rather than a test failure. The hermetic ones
-(`test_profiles_ui.py`, `test_fresh_install_models.py`,
+(`test_profiles_ui.py`, `test_local_chat.py`, `test_fresh_install_models.py`,
 `test_local_model_autodetect.py`, `test_local_model_late_start.py`) start their
 own server against a throwaway `REXENIOT_HOME` and can run on their own. Note
 that `REXENIOT_HOME` relocates the whole app root, not just `data/`, so a
 throwaway home needs `web/` and `requirements*.txt` linked into it.
+
+`test_local_chat.py` is the end-to-end one: a stand-in OpenAI server takes the
+place of llama-swap and the app has to complete a turn through it, tool call and
+streaming included. The discovery tests alone will not catch a server that
+cannot accept `tools` — llama-server needs `--jinja` for that, and without it
+the request fails at completion time, not at discovery time.
 
 ## API
 
