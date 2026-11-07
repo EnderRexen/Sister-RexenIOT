@@ -1,0 +1,109 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rexeniot"
+version = "0.1.0"
+description = "Sister RexenIOT -- local-first voice assistant and home-keeper"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Sister RexenIOT contributors" }]
+keywords = ["voice", "assistant", "tts", "stt", "local-first", "home-automation"]
+
+# The light tier: CPU only, no PyTorch. Kept deliberately small (~200 MB).
+#
+# kittenml is listed here but its dependencies are stripped by the
+# [tool.uv] dependency-metadata override below. The package declares torch,
+# torchaudio and transformers as hard requirements, yet the ONNX speech backend
+# needs none of them. Declaring the real subset here and neutralising the
+# upstream metadata is what keeps the light tier from pulling 2.5 GB of PyTorch.
+dependencies = [
+  # ---- web app ----
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "pydantic>=2.9",
+  "python-multipart>=0.0.12",
+  "httpx>=0.27",
+  "jinja2>=3.1",
+  "psutil>=6.0",
+
+  # ---- TTS: ONNX backend only ----
+  "numpy>=1.26",
+  "soundfile>=0.12",
+  "onnxruntime>=1.19",
+  "espeakng-loader>=0.2",
+  "phonemizer>=3.2",
+  "kitten-text-processing>=0.1.0",
+  "kittenml==0.9.4",
+  "huggingface_hub>=0.26",
+
+  # ---- optional integrations (fail soft if absent) ----
+  "paho-mqtt>=2.1",
+]
+
+[project.optional-dependencies]
+# Dictation. Without it the browser's own speech recognition is used, which
+# needs Chrome or Edge and sends audio to the vendor.
+stt = [
+  "faster-whisper>=1.0",
+  # PyAV supplies the ffmpeg that decodes browser recordings (Opus in WebM,
+  # AAC in MP4). faster-whisper pulls it in, but pin the floor: 11.0 is where
+  # the container/decoder API this app uses stabilised.
+  "av>=11.0",
+]
+
+# The 1.7B KittenTTS 2 speech model: 47 voices, voice cloning, emotion tags.
+# Adds roughly 2.5 GB on top of the light tier.
+full = [
+  "torch>=2.6",
+  "torchaudio>=2.6",
+  "transformers>=4.55",
+  "safetensors",
+  "scipy",
+  "librosa",
+  "einops",
+  "diffusers",
+  "omegaconf",
+  "hydra-core",
+  "s3tokenizer",
+  "resemble-perth",
+  "pyloudnorm",
+  "brotli",
+]
+
+# GPU execution providers for the ONNX speech tiers. Each is a drop-in
+# replacement for onnxruntime -- same import name, same API -- so only one may
+# be installed. Install it *instead of* the base onnxruntime:
+#
+#   uv pip uninstall onnxruntime
+#   uv sync --extra gpu
+#
+# PEP 621 cannot express "replace a base dependency", so the uninstall stays
+# explicit. The `conflicts` table below does enforce that these two are never
+# selected together, which is the part that was previously a comment.
+gpu = ["onnxruntime-gpu>=1.19"]
+directml = ["onnxruntime-directml>=1.20"]
+
+[project.scripts]
+rexeniot = "app.main:main"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.uv]
+# Neutralise kittenml's declared dependencies. It requires torch>=2.6,
+# torchaudio>=2.6, transformers>=4.55 and fifteen others, but the ONNX backend
+# imports none of them. This is the declarative equivalent of the launcher's
+# `pip install --no-deps kittenml==0.9.4`, and it keeps the dependency graph
+# honest for the Nix build instead of hiding the trick in a shell command.
+dependency-metadata = [
+  { name = "kittenml", version = "0.9.4", requires-dist = [] },
+]
+
+# onnxruntime-gpu and onnxruntime-directml both provide the `onnxruntime`
+# module, so selecting both produces a broken environment.
+conflicts = [
+  [{ extra = "gpu" }, { extra = "directml" }],
+]

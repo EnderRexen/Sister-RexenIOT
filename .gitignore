@@ -17,3 +17,8 @@ data/chat_history.jsonl
 .req-hash
 *.wav
 data/stack.log
+
+# ---- nix ----
+result
+result-*
+.direnv/
