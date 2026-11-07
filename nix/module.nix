@@ -32,6 +32,42 @@ let
       full = self.packages.${system}.rexeniot-full;
     }
     .${tier};
+
+  # A partial config.json used to point the app at a local model on first
+  # start. Built with toJSON so the quoting is handled by Nix, and with nulls
+  # filtered out because the schema types `base_url` and `model` as `str` --
+  # a literal `null` would be rejected and the app would silently fall back to
+  # its own defaults. Only evaluated when the operator sets one of the options.
+  llmSeed = pkgs.writeText "rexeniot-llm-seed.json" (
+    builtins.toJSON {
+      llm = lib.filterAttrs (_: v: v != null) {
+        provider = cfg.llm.provider;
+        base_url = cfg.llm.baseUrl;
+        model = cfg.llm.model;
+      };
+    }
+  );
+
+  # Re-applies the three LLM fields on every start. The merge is recursive
+  # (`jq`'s `*`), so unrelated settings the operator changed in the panel --
+  # temperature, voice, wake words -- are preserved, and only provider,
+  # base_url and model are made authoritative. Those three therefore revert to
+  # this configuration on restart, which is the point: it is what makes the
+  # model selection declarative instead of a one-shot first-boot seed.
+  llmSeedApply = pkgs.writeShellScript "rexeniot-llm-seed" ''
+    set -eu
+    cfg=/var/lib/rexeniot/data/config.json
+    # Absolute store paths: a systemd unit on NixOS has no /usr/bin, so a bare
+    # `mktemp` or `mv` would not be found.
+    ${pkgs.coreutils}/bin/mkdir -p /var/lib/rexeniot/data
+    if [ -e "$cfg" ]; then
+      tmp=$(${pkgs.coreutils}/bin/mktemp)
+      ${pkgs.jq}/bin/jq -s '.[0] * .[1]' "$cfg" ${llmSeed} > "$tmp"
+      ${pkgs.coreutils}/bin/mv "$tmp" "$cfg"
+    else
+      ${pkgs.coreutils}/bin/cp ${llmSeed} "$cfg"
+    fi
+  '';
 in
 {
   options.services.rexeniot = {
@@ -91,7 +127,30 @@ in
         the state directory; point this at bulk storage to keep them off the
         root filesystem. The path is symlinked into the state directory on
         start, so it must exist and be readable by the service user.
+
+        If the drive is owned by a normal user, set `user` as well -- a
+        DynamicUser cannot read it. `modelsDir` is also added to
+        `ReadWritePaths`, because `ProtectSystem = "strict"` would otherwise
+        make downloads into it fail.
       '';
+    };
+
+    user = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "ender";
+      description = ''
+        Run the service as this user instead of a systemd DynamicUser. Required
+        when `modelsDir` points at a drive owned by a normal user: a DynamicUser
+        gets an unmapped uid and cannot read it, which is the same wall
+        llama-swap hits on a `/run/media` mount.
+      '';
+    };
+
+    group = mkOption {
+      type = types.str;
+      default = "users";
+      description = "Group to run as when `user` is set.";
     };
 
     environmentFile = mkOption {
@@ -110,6 +169,45 @@ in
       example = { REXENIOT_NO_STT = "1"; };
       description = "Additional environment variables for the service.";
     };
+
+    llm = {
+      provider = mkOption {
+        type = types.enum [
+          "auto"
+          "openai"
+          "anthropic"
+          "ollama"
+          "offline"
+        ];
+        default = "openai";
+        description = ''
+          Wire format for the chat backend. `openai` is the right choice for any
+          OpenAI-compatible server, which includes llama.cpp, llama-swap, vLLM,
+          LM Studio and Ollama. `auto` sniffs it from the URL, but setting it
+          explicitly avoids a mis-detection turning into a confusing error.
+        '';
+      };
+
+      baseUrl = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "http://127.0.0.1:8080/v1";
+        description = ''
+          OpenAI-compatible endpoint. The service runs on the host, so a
+          llama-swap listening on the loopback needs no Docker hostname here.
+        '';
+      };
+
+      model = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "qwen3-8b";
+        description = ''
+          Model name exactly as the server advertises it. For llama-swap this is
+          the key in its `models` attribute, not a filename or an Ollama tag.
+        '';
+      };
+    };
   };
 
   config = mkIf cfg.enable {
@@ -117,6 +215,13 @@ in
       description = "Sister RexenIOT voice assistant";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
+
+      # [Unit] directive, so it belongs in unitConfig. Without it systemd may
+      # start the service before the bulk-storage drive is mounted, and the
+      # models symlink below would point at an empty directory.
+      unitConfig.RequiresMountsFor = optional (cfg.modelsDir != null) (
+        toString cfg.modelsDir
+      );
 
       environment = {
         REXENIOT_HOME = "/var/lib/rexeniot";
@@ -126,10 +231,12 @@ in
       # StateDirectory is created before ExecStartPre runs, so the symlink below
       # always has a writable parent.
       serviceConfig = {
-        ExecStartPre = optional (cfg.modelsDir != null) (
-          "mkdir -p /var/lib/rexeniot/data && "
-          + "ln -sfn ${cfg.modelsDir} /var/lib/rexeniot/data/models"
-        );
+        ExecStartPre =
+          optional (cfg.modelsDir != null) (
+            "mkdir -p /var/lib/rexeniot/data && "
+            + "ln -sfn ${cfg.modelsDir} /var/lib/rexeniot/data/models"
+          )
+          ++ optional (cfg.llm.baseUrl != null || cfg.llm.model != null) "${llmSeedApply}";
 
         ExecStart = lib.escapeShellArgs [
           "${cfg.package}/bin/rexeniot"
@@ -140,7 +247,13 @@ in
           "--no-browser"
         ];
 
-        DynamicUser = true;
+        # DynamicUser is the default and the safer choice, but it gives the
+        # process an unmapped uid that cannot read a drive owned by a normal
+        # user. mkForce is needed because the value is set here either way.
+        DynamicUser = lib.mkForce (cfg.user == null);
+        User = lib.mkIf (cfg.user != null) cfg.user;
+        Group = lib.mkIf (cfg.user != null) cfg.group;
+
         StateDirectory = "rexeniot";
         WorkingDirectory = "/var/lib/rexeniot";
 
@@ -152,6 +265,11 @@ in
         ProtectSystem = "strict";
         ProtectHome = true;
         PrivateTmp = true;
+
+        # ProtectSystem=strict mounts everything read-only, so model downloads
+        # into modelsDir would fail without this. PrivateTmp is set above, so
+        # /tmp is already writable for the seed script's mktemp.
+        ReadWritePaths = optional (cfg.modelsDir != null) (toString cfg.modelsDir);
       };
     };
 

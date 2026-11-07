@@ -9,10 +9,10 @@
   makeWrapper,
   writeShellScript,
   coreutils,
-  # nixpkgs exports this binary as `espeak` (all-packages.nix: `espeak =
-  # espeak-ng;`). `espeak-ng` is only a let-bound name, not a top-level
-  # attribute, so a formal spelled `espeak-ng` would fail with "called without
-  # required argument".
+  # The binary is packaged at pkgs/by-name/es/espeak-ng, so both `espeak-ng`
+  # (the by-name attribute) and `espeak` (the explicit alias in
+  # all-packages.nix) resolve. `espeak` is used here because it is the one
+  # written out in all-packages.nix, but either name works.
   espeak,
   # Named explicitly rather than relying on implicit scoping, so a caller that
   # forgets it fails loudly instead of silently picking up nixpkgs' python3.
@@ -44,6 +44,16 @@ let
 
     export REXENIOT_HOME="''${REXENIOT_HOME:-''${XDG_DATA_HOME:-$HOME/.local/share}/rexeniot}"
     mkdir -p "$REXENIOT_HOME/data"
+
+    # Keep every cache inside the state directory. app/config.py already puts
+    # TTS and STT weights under data/models, but transformers, diffusers and
+    # huggingface_hub default to ~/.cache/huggingface. Under systemd HOME is
+    # not writable, and on a plain `nix run` it would scatter gigabytes across
+    # the user's home. Pinning these keeps the install self-contained, which is
+    # what the project promises.
+    export HF_HOME="''${HF_HOME:-$REXENIOT_HOME/data/hf}"
+    export XDG_CACHE_HOME="''${XDG_CACHE_HOME:-$REXENIOT_HOME/data/cache}"
+    mkdir -p "$HF_HOME" "$XDG_CACHE_HOME"
 
     # Only link the assets we actually packaged. Copying over an operator's own
     # web/ would silently discard local customisations.
