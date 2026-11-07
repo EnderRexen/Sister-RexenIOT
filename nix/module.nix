@@ -108,8 +108,8 @@ in
 
     port = mkOption {
       type = types.port;
-      default = 8765;
-      description = "Port to listen on.";
+      default = 8060;
+      description = "Port to listen on. Defaults to the app's own default.";
     };
 
     openFirewall = mkOption {
@@ -121,7 +121,7 @@ in
     modelsDir = mkOption {
       type = types.nullOr types.path;
       default = null;
-      example = "/run/media/ender/5TB_AI/MODELS/TTS";
+      example = "/mnt/bulk-storage/MODELS/TTS";
       description = ''
         Where downloaded speech models should live. The default keeps them in
         the state directory; point this at bulk storage to keep them off the
