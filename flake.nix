@@ -148,6 +148,18 @@
             ${self.packages.${system}.rexeniot}/bin/rexeniot --help > $out
             grep -q "Sister RexenIOT" $out
           '';
+          # The NixOS module's option paths and unit wiring are only
+          # validated by evaluation. A syntax check accepts a duplicate
+          # attribute and a mistyped option path, and both are hard errors
+          # that would otherwise surface at `nixos-rebuild switch`.
+          # module-check.nix throws on a failed assertion, so forcing its
+          # value here makes `nix flake check` fail instead of passing.
+          rexeniot-module-contract = pkgs.runCommand "rexeniot-module-contract-check" { } ''
+            echo ${lib.escapeShellArg (import ./nix/module-check.nix {
+              nixpkgsPath = nixpkgs;
+              modulePath = ./nix/module.nix;
+            })} > $out
+          '';
         }
       );
 

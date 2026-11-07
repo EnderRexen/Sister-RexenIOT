@@ -112,6 +112,18 @@ for a few minutes after starting, so a model server that appears late is still
 picked up. Ordering only narrows the window — it does not wait for the server to
 be ready to accept connections.
 
+The module's option paths and unit wiring are only checked by evaluating it. A
+Nix syntax check accepts a duplicate attribute or a mistyped option path, and
+both are hard errors at `nixos-rebuild switch`. `nix/module-check.nix` evaluates
+the module inside the real NixOS module system and asserts the wiring;
+`nix flake check` runs it as `rexeniot-module-contract`. On its own:
+
+```sh
+nix-instantiate --eval --strict nix/module-check.nix --arg nixpkgsPath '<nixpkgs>'
+```
+
+It prints `"ok"`, or throws naming the assertion that failed.
+
 The **Detect local models** button is still useful in this case: it tells you the
 exact model name to put in the Nix file.
 
@@ -433,6 +445,14 @@ data/                    config, personalities, skills, models, cache, log
 during development (`test_tts_device.py`, `test_recommend.py`,
 `test_admin_gpu.py`, `test_attach_ui.py` and friends); run them with
 `PYTHONPATH=. .venv/bin/python scripts/<name>.py`.
+
+Most of those need the app already running on `127.0.0.1:8070`; without it they
+fail with a connection error rather than a test failure. The hermetic ones
+(`test_profiles_ui.py`, `test_fresh_install_models.py`,
+`test_local_model_autodetect.py`, `test_local_model_late_start.py`) start their
+own server against a throwaway `REXENIOT_HOME` and can run on their own. Note
+that `REXENIOT_HOME` relocates the whole app root, not just `data/`, so a
+throwaway home needs `web/` and `requirements*.txt` linked into it.
 
 ## API
 
