@@ -46,7 +46,9 @@ point her at one.
 
 RexenIOT talks to any OpenAI-compatible endpoint, so you can use whichever local
 runtime you already prefer. Open the admin panel at `/admin` → **Model Backend**
-and pick one:
+and press **Detect local models**: RexenIOT probes the usual ports and fills the
+form in with whatever answers, so you do not have to remember a URL or a model
+name. Detection only reads — press **Save** to accept it.
 
 | Runtime | Base URL | Notes |
 |---|---|---|
@@ -60,6 +62,34 @@ Provider detection is automatic from the URL, so pasting a base URL is usually
 enough. Keys are read from `REXENIOT_API_KEY` (or `OPENAI_API_KEY` /
 `ANTHROPIC_API_KEY`) in preference to the config file, so secrets can stay in
 the environment.
+
+If nothing is listening yet, the panel says so and lists the ports it tried.
+
+### When the settings are managed by NixOS
+
+On NixOS the module can declare the model instead of leaving it to the panel. If
+you set `services.rexeniot.llm.provider`, `llm.baseUrl` or `llm.model`, those
+three are re-applied on every service start, so a change made in the panel is
+reverted the next time the service restarts. That is deliberate — it is what
+makes the model selection declarative.
+
+The practical consequence: if you configured the model in Nix, editing it in the
+panel appears to work and then silently reverts later. Change it in the Nix
+configuration and rebuild instead:
+
+```nix
+services.rexeniot.llm = {
+  provider = "openai";
+  baseUrl = "http://127.0.0.1:8080/v1";
+  model = "qwen3-8b";   # must match a key in llama-swap's `models` attribute
+};
+```
+
+Leave those options unset to let the panel own the setting. Every other field
+(temperature, voice, wake words) is preserved either way.
+
+The **Detect local models** button is still useful in this case: it tells you the
+exact model name to put in the Nix file.
 
 ## Hardware scan and model recommendations
 

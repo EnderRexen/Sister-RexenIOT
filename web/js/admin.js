@@ -1131,6 +1131,34 @@ async function listLlmModels() {
   }
 }
 
+/* Finds a local model server and fills the form in, so a first run does not
+   need the URL and model name typed from memory. Detection only reads; the
+   operator still presses Save. */
+async function detectLocalModels() {
+  const out = $("#llm-detect-result");
+  out.textContent = "looking…";
+  try {
+    const data = await api("/admin/llm/discover");
+    const found = data.found || [];
+    if (!found.length) {
+      const tried = (data.candidates || []).map((c) => c.label).join(", ");
+      out.textContent = `nothing found. Tried: ${tried}.`;
+      return;
+    }
+    const best = found[0];
+    $("[name='llm.provider']").value = "auto";
+    $("[name='llm.base_url']").value = best.base_url;
+    if (best.models?.length) $("[name='llm.model']").value = best.models[0];
+    const dl = $("#llm-models");
+    if (dl) dl.innerHTML = best.models.map((m) => `<option value="${escapeHtml(m)}"></option>`).join("");
+    out.textContent = `found ${best.label} at ${best.base_url} (${best.models.join(", ")}). Press Save.`;
+    toast(`Found ${best.label}. Press Save to use it.`, "ok");
+  } catch (err) {
+    out.textContent = `error — ${err.message}`;
+    toast(`Detection failed: ${err.message}`, "err");
+  }
+}
+
 /* -------------------------------------------------------------- tools/status */
 
 async function loadIntegrations() {
@@ -1411,6 +1439,7 @@ function wireEvents() {
 
   $("#btn-llm-test").addEventListener("click", testLlm);
   $("#btn-llm-list").addEventListener("click", listLlmModels);
+  $("#btn-llm-detect")?.addEventListener("click", detectLocalModels);
 
   $$("#llm-quickpicks .chip").forEach((chip) => {
     chip.addEventListener("click", () => {

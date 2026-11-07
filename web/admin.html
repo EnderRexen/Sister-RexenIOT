@@ -257,6 +257,11 @@
         <button class="chip" data-provider="openai" data-url="http://localhost:8000/v1">vLLM (local)</button>
       </div>
 
+        <div class="row-actions">
+          <button class="btn" id="btn-llm-detect">Detect local models</button>
+          <span class="muted" id="llm-detect-result">Looks for Ollama, LM Studio, llama.cpp and vLLM on this machine.</span>
+        </div>
+
       <h3>Connection</h3>
       <div class="field-grid">
         <label>Provider
