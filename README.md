@@ -44,8 +44,15 @@ point her at one.
 
 ## Giving her a brain
 
-RexenIOT talks to any OpenAI-compatible endpoint, so you can use whichever local
-runtime you already prefer. Open the admin panel at `/admin` → **Model Backend**
+On the very first start RexenIOT looks for a local model server by itself: it
+probes the usual ports and, if one answers, adopts the first model that server
+offers. On a machine already running llama-swap, Ollama or LM Studio, she can
+hold a conversation with no setup at all.
+
+Discovery runs once, and only while no model is configured. A model you choose
+later is never overwritten by a restart.
+
+To pick a different model, open the admin panel at `/admin` → **Model Backend**
 and press **Detect local models**: RexenIOT probes the usual ports and fills the
 form in with whatever answers, so you do not have to remember a URL or a model
 name. Detection only reads — press **Save** to accept it.
@@ -85,8 +92,10 @@ services.rexeniot.llm = {
 };
 ```
 
-Leave those options unset to let the panel own the setting. Every other field
-(temperature, voice, wake words) is preserved either way.
+Leave those options unset — the default, and what the shipped
+`configuration.nix` does — to let the app find the model itself and the panel own
+the setting afterwards. Every other field (temperature, voice, wake words) is
+preserved either way.
 
 The **Detect local models** button is still useful in this case: it tells you the
 exact model name to put in the Nix file.

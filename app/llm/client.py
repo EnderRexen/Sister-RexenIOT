@@ -114,6 +114,29 @@ async def probe_url(base_url: str) -> dict[str, Any] | None:
     return await _probe(base_url, "")
 
 
+async def adopt_first_local() -> dict[str, Any] | None:
+    """Point the LLM at the first local server that answers, and persist it.
+
+    Used once on first boot so a fresh install can chat without anyone opening
+    the admin panel. Returns what was adopted, or None when nothing local is
+    listening -- in which case the caller leaves the app in offline mode rather
+    than inventing an endpoint.
+
+    Only ever called when no model is configured, so it cannot overwrite a
+    working setup.
+    """
+    found = await discover_local()
+    if not found:
+        return None
+    best = found[0]
+    model = best["models"][0]
+    config.update(
+        {"llm": {"provider": "auto", "base_url": best["base_url"], "model": model}}
+    )
+    client.refresh()
+    return {"base_url": best["base_url"], "model": model, "label": best.get("label", "")}
+
+
 class LLMClient:
     def __init__(self, cfg: config.LLMConfig | None = None) -> None:
         self.cfg = cfg or config.load().llm

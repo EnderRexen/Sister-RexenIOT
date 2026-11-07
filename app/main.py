@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__, config, hardware, model_catalog, personalities
+from .llm import adopt_first_local
 from .routers import admin, chat, status
 from .stt import available as stt_available, engine as stt_engine
 from .tts import engine
@@ -53,6 +54,30 @@ async def lifespan(app: FastAPI):
 
     personalities.load()  # seed built-ins on first boot
     log.info("personalities: %d loaded, active '%s'", len(personalities.load()), personalities.active().name)
+
+    # A fresh install should be able to talk without anyone opening the admin
+    # panel first, so look for a local model server once. Guarded on the model
+    # being unset, so this never overwrites a configuration that already works
+    # and never runs again on a later boot.
+    if not cfg.llm.model and cfg.llm.provider != "offline":
+        try:
+            adopted = await adopt_first_local()
+        except Exception as exc:
+            # A model server being down is a normal state, not a boot failure.
+            log.warning("local model discovery failed: %s", exc)
+            adopted = None
+        if adopted:
+            log.info(
+                "adopted local model %s at %s (%s)",
+                adopted["model"],
+                adopted["base_url"],
+                adopted["label"],
+            )
+        else:
+            log.info(
+                "no local model server found; chat stays offline until one is "
+                "configured at /admin"
+            )
 
     if cfg.tts.enabled:
         # Warm the model in the background so the first spoken reply is not slow.
