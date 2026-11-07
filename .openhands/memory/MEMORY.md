@@ -3,6 +3,46 @@
 Sister RexenIOT: local-first home-assistant web app, Python FastAPI backend +
 vanilla JS frontend, KittenTTS for speech.
 
+## Nix packaging (`flake.nix`, `nix/package.nix`, `nix/module.nix`)
+
+- Build with `nix build .#rexeniot` (tiers: `rexeniot`, `rexeniot-stt`,
+  `rexeniot-full`). `checks.<system>.rexeniot-runs` executes the wrapper with
+  `--help`; a build alone does not prove the wrapper can start.
+- **`callPackage` injects top-level attrs for any unsupplied formal**, so a
+  formal named `src` picks up nixpkgs' throwing alias
+  (`aliases.nix: src = throw "renamed to simple-revision-control"`, added
+  2025-11-19) and the `? ./..` default is never reached. Use `srcDir`. The
+  error text ("falsely constructed overlay") points nowhere near the cause.
+- **`pkgs/top-level/all-packages.nix` does NOT list `by-name` packages.** A grep
+  miss there means "not confirmed", not "absent" — `espeak-ng` is a by-name
+  package (`pkgs/by-name/es/espeak-ng`) and IS a valid attribute. Confirm with
+  `GET /repos/NixOS/nixpkgs/contents/pkgs/by-name/<2-letter-prefix>/<name>`.
+- `nix-portable` does NOT work in this sandbox. Validate `.nix` syntax with
+  tree-sitter (`tree_sitter` + `tree_sitter_nix`, both installed); there is no
+  `nix` binary here, so nothing can be evaluated or built.
+- The NixOS module is imported as `import ./nix/module.nix { inherit self; }`.
+  `self` is bound in the module header (`{ self }: { config, lib, pkgs, ... }`).
+- `services.rexeniot.llm.{provider,baseUrl,model}` are merged into
+  `data/config.json` on **every** start with `jq -s '.[0] * .[1]'`. Recursive
+  merge, so operator edits (temperature, voice, wake words) survive while those
+  three stay authoritative. Nulls are filtered from the seed because
+  `LLMConfig` types `base_url`/`model` as `str` — a literal `null` fails
+  validation and the app silently falls back to defaults.
+- **`ProtectSystem = "strict"` makes everything read-only**, so a `modelsDir`
+  outside the state dir needs `ReadWritePaths`, and a `/run/media` drive needs
+  `unitConfig.RequiresMountsFor` or the symlink lands on an unmounted path.
+- **A DynamicUser cannot read a user-owned drive** (unmapped uid) — the same
+  wall llama-swap hits. `services.rexeniot.user = "ender"` switches to a real
+  user via `DynamicUser = lib.mkForce false`.
+- The launcher pins `HF_HOME` and `XDG_CACHE_HOME` under `REXENIOT_HOME`, since
+  transformers/diffusers/huggingface_hub default to `~/.cache/huggingface`
+  (unwritable under systemd).
+- Scripts run by systemd need **absolute store paths** (`${pkgs.coreutils}/bin/mv`):
+  a NixOS unit has no `/usr/bin`.
+- `pyproject.toml` overrides kittenml's metadata to `requires-dist = []`, so the
+  ONNX tier avoids ~2.5 GB of PyTorch; `gpu`/`directml` are a uv `conflicts` pair
+  because both provide the `onnxruntime` module.
+
 ## TTS: KittenTTS tiers, voices, and acceleration
 
 - Tiers are chosen in `app/model_catalog.py` (`KITTEN_TTS_MODELS`), keyed by repo
