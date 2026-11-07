@@ -229,26 +229,66 @@ def _share_from_comfyui(base: str, images: list[dict[str, str]]) -> list[str]:
     return shared
 
 
-def _inject_prompt(graph: dict[str, Any], prompt: str, negative: str) -> dict[str, Any]:
-    """Replace the first positive and negative text nodes in a user workflow."""
-    positive_done = negative_done = False
+def _text_nodes(graph: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Map node id -> node for every CLIPTextEncode node in the graph."""
+    return {
+        node_id: node
+        for node_id, node in graph.items()
+        if isinstance(node, dict) and node.get("class_type") == "CLIPTextEncode"
+    }
+
+
+def _wired_text_nodes(graph: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Find the text nodes the sampler actually reads as positive and negative.
+
+    ComfyUI wires a KSampler to two CLIPTextEncode nodes through
+    ``inputs.positive`` / ``inputs.negative``, each a ``[node_id, slot]`` pair.
+    Following those links is the only reliable way to tell the slots apart: a
+    graph exported before the user typed anything has both text fields empty, so
+    ordering alone cannot distinguish them.
+    """
+    positive = negative = None
     for node in graph.values():
-        if not isinstance(node, dict):
+        if not isinstance(node, dict) or node.get("class_type") != "KSampler":
             continue
-        if node.get("class_type") != "CLIPTextEncode":
-            continue
-        inputs = node.setdefault("inputs", {})
-        text = str(inputs.get("text", ""))
-        # Heuristic: an empty or obviously placeholder text is the positive slot.
-        if not positive_done and text.strip() not in ("", "positive"):
-            inputs["text"] = prompt
-            positive_done = True
-        elif not negative_done:
-            inputs["text"] = negative
-            negative_done = True
-    if not positive_done:
-        # No usable node found: fall back to the built-in graph.
+        inputs = node.get("inputs") or {}
+        for key, target in (("positive", "positive"), ("negative", "negative")):
+            link = inputs.get(key)
+            if not isinstance(link, (list, tuple)) or not link:
+                continue
+            node_id = str(link[0])
+            if node_id not in _text_nodes(graph):
+                continue
+            if target == "positive" and positive is None:
+                positive = node_id
+            elif target == "negative" and negative is None:
+                negative = node_id
+    return positive, negative
+
+
+def _inject_prompt(graph: dict[str, Any], prompt: str, negative: str) -> dict[str, Any]:
+    """Replace the positive and negative text nodes in a user workflow."""
+    nodes = _text_nodes(graph)
+    if not nodes:
+        # No text node at all: fall back to the built-in graph.
         return _default_workflow(prompt, negative, 1024, 1024, 25)
+
+    positive_id, negative_id = _wired_text_nodes(graph)
+
+    # Fall back to declaration order only when the sampler does not say which
+    # node is which. JSON object order is insertion order, which is how ComfyUI
+    # exports a workflow, so the first node is the conventional positive slot.
+    if positive_id is None:
+        remaining = [nid for nid in nodes if nid != negative_id]
+        positive_id = remaining[0] if remaining else None
+    if negative_id is None:
+        remaining = [nid for nid in nodes if nid != positive_id]
+        negative_id = remaining[0] if remaining else None
+
+    if positive_id is not None:
+        nodes[positive_id].setdefault("inputs", {})["text"] = prompt
+    if negative_id is not None and negative_id != positive_id:
+        nodes[negative_id].setdefault("inputs", {})["text"] = negative
     return graph
 
 
