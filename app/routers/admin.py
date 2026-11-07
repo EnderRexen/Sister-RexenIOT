@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 from .. import config, hardware, model_catalog, personalities, profiles, skills, uploads
 from ..hardware import directml_advice, nvidia_compute_cap, torch_gpu_advice
-from ..llm import client as llm_client
+from ..llm import LOCAL_CANDIDATES, client as llm_client, discover_local, probe_url
 from ..stt import available as stt_available, engine as stt_engine
 from ..tools import registry
 from ..tts import engine
@@ -1300,3 +1300,46 @@ async def complete_first_run(x_admin_token: str | None = Header(default=None)) -
     _check(x_admin_token)
     config.update({"first_run_complete": True})
     return {"ok": True}
+
+
+@router.get("/llm/discover")
+async def discover_llm(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+    """List local model servers that answer, best candidate first.
+
+    Read-only, so the admin panel can offer a one-click setup on a first run
+    without touching a configuration that already works.
+    """
+    _check(x_admin_token)
+    found = await discover_local()
+    return {
+        "found": found,
+        "current": llm_client.describe(),
+        "candidates": [{"url": u, "label": l} for u, l in LOCAL_CANDIDATES],
+    }
+
+
+class AdoptRequest(BaseModel):
+    base_url: str
+    model: str = ""
+
+
+@router.post("/llm/adopt")
+async def adopt_llm(
+    body: AdoptRequest, x_admin_token: str | None = Header(default=None)
+) -> dict[str, Any]:
+    """Point the LLM at a local server, optionally overriding the model.
+
+    The model is chosen from what the server actually serves when the caller
+    does not name one, so a first run needs no guessing.
+    """
+    _check(x_admin_token)
+    found = await probe_url(body.base_url)
+    models = (found or {}).get("models") or []
+    model = body.model.strip() or (models[0] if models else "")
+    if not model:
+        raise HTTPException(404, f"no models served by {body.base_url}")
+    if body.model.strip() and body.model.strip() not in models:
+        raise HTTPException(400, f"{body.model} is not served by {body.base_url}; it has {models}")
+    config.update({"llm": {"provider": "auto", "base_url": body.base_url, "model": model}})
+    llm_client.refresh()
+    return {"ok": True, "llm": llm_client.describe()}

@@ -17,6 +17,7 @@ disappear.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, AsyncIterator
@@ -66,6 +67,51 @@ def _normalize_base_url(provider: str, base_url: str) -> str:
             url = f"http://{url}"
         return url
     return url
+
+
+# Well-known local model servers, in the order a first run should prefer them.
+# llama-swap/llama.cpp leads because it is the documented local stack; then the
+# usual suspects. host.docker.internal lets a container reach a server on the
+# host, which is how the NixOS setup runs.
+LOCAL_CANDIDATES: list[tuple[str, str]] = [
+    ("http://localhost:8080/v1", "llama-swap / llama.cpp"),
+    ("http://localhost:11434/v1", "Ollama"),
+    ("http://localhost:1234/v1", "LM Studio"),
+    ("http://localhost:8000/v1", "vLLM"),
+    ("http://host.docker.internal:8080/v1", "llama-swap on the host"),
+    ("http://host.docker.internal:11434/v1", "Ollama on the host"),
+]
+
+
+async def _probe(base_url: str, label: str) -> dict[str, Any] | None:
+    """Ask one candidate what it serves. None when nothing usable answers."""
+    try:
+        async with httpx.AsyncClient(timeout=2.5) as http:
+            resp = await http.get(f"{base_url.rstrip('/')}/models")
+            if resp.status_code >= 400:
+                return None
+            payload = resp.json()
+    except Exception:
+        return None
+    ids = [m.get("id") for m in payload.get("data", []) if m.get("id")]
+    if not ids:
+        return None
+    return {"base_url": base_url, "label": label, "models": sorted(ids)}
+
+
+async def discover_local() -> list[dict[str, Any]]:
+    """Report every local model server that answers, best candidate first.
+
+    Read-only: nothing is written, so the admin panel can show what is available
+    without disturbing a configuration that is already working.
+    """
+    results = await asyncio.gather(*(_probe(url, label) for url, label in LOCAL_CANDIDATES))
+    return [r for r in results if r]
+
+
+async def probe_url(base_url: str) -> dict[str, Any] | None:
+    """Ask one specific server what it serves. None when it does not answer."""
+    return await _probe(base_url, "")
 
 
 class LLMClient:
