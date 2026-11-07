@@ -14,6 +14,12 @@
   # all-packages.nix) resolve. `espeak` is used here because it is the one
   # written out in all-packages.nix, but either name works.
   espeak,
+  # `soundfile` (pulled in by KittenTTS) dlopen()s `libsndfile.so` at import
+  # time, and uv2nix builds a Python environment whose closure does not contain
+  # it. Without this the TTS warm-up fails at startup with
+  # "OSError: cannot load library 'libsndfile.so'", which reads like a broken
+  # model download rather than a missing system library.
+  libsndfile,
   # Named explicitly rather than relying on implicit scoping, so a caller that
   # forgets it fails loudly instead of silently picking up nixpkgs' python3.
   pythonEnv,
@@ -99,6 +105,7 @@ stdenv.mkDerivation {
 
     makeWrapper ${launcher} $out/bin/rexeniot \
       --prefix PATH : ${lib.makeBinPath [ coreutils espeak ]} \
+      --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ libsndfile ]} \
       --set REXENIOT_WEB_DIR $out/share/rexeniot/web
 
     runHook postInstall
