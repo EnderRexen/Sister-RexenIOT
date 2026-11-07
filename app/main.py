@@ -7,6 +7,7 @@ Serves the JSON API under ``/api`` and the static HUD from ``/``. Run it with
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -18,7 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__, config, hardware, model_catalog, personalities
-from .llm import adopt_first_local
+from .llm import adopt_first_local, adopt_first_local_in_background
 from .routers import admin, chat, status
 from .stt import available as stt_available, engine as stt_engine
 from .tts import engine
@@ -74,15 +75,35 @@ async def lifespan(app: FastAPI):
                 adopted["label"],
             )
         else:
+            # The model server is a separate service and may not be listening
+            # yet, so keep looking in the background. This is the only chance:
+            # a one-shot probe that misses leaves the app offline until someone
+            # restarts it or opens the admin panel.
             log.info(
-                "no local model server found; chat stays offline until one is "
-                "configured at /admin"
+                "no local model server found yet; looking in the background, and "
+                "chat stays offline until one is configured at /admin"
             )
+
+            async def retry_adopt() -> None:
+                try:
+                    found = await adopt_first_local_in_background()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    log.warning("background model discovery failed: %s", exc)
+                    return
+                if found:
+                    log.info(
+                        "adopted local model %s at %s (%s) after waiting",
+                        found["model"],
+                        found["base_url"],
+                        found["label"],
+                    )
+
+            asyncio.create_task(retry_adopt())
 
     if cfg.tts.enabled:
         # Warm the model in the background so the first spoken reply is not slow.
-        import asyncio
-
         async def warm() -> None:
             try:
                 await asyncio.to_thread(engine.ensure_loaded)
@@ -96,8 +117,6 @@ async def lifespan(app: FastAPI):
         # Same reasoning as TTS: the first dictation should not pay the load.
         # Guarded on availability because this is an optional install and a
         # missing set is expected, not a failure worth logging on every boot.
-        import asyncio
-
         async def warm_stt() -> None:
             try:
                 await asyncio.to_thread(stt_engine.ensure_loaded)

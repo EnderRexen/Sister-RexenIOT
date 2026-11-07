@@ -137,6 +137,50 @@ async def adopt_first_local() -> dict[str, Any] | None:
     return {"base_url": best["base_url"], "model": model, "label": best.get("label", "")}
 
 
+#: How long to keep looking for a model server after boot, and how often.
+#:
+#: The app and a local model server are separate services with no ordering
+#: between them, so the app can win the boot race and probe before the model
+#: server is listening. A one-shot probe misses it and the app then sits offline
+#: for the life of the process. Retrying covers that window, and the ordinary
+#: case of starting the model server later by hand.
+ADOPT_RETRY_ATTEMPTS = 20
+ADOPT_RETRY_INTERVAL_S = 15.0
+
+
+async def adopt_first_local_in_background(
+    interval_s: float | None = None,
+    attempts: int | None = None,
+) -> dict[str, Any] | None:
+    """Keep probing until a local model server appears, then adopt it.
+
+    Returns what was adopted, or None if none appeared within the budget. The
+    arguments default to the module constants at call time so a caller -- or a
+    test -- can shorten them.
+
+    Every attempt re-reads the config first, so a model chosen in the admin panel
+    while this is running wins and the loop exits rather than overwriting it.
+    """
+    interval = ADOPT_RETRY_INTERVAL_S if interval_s is None else interval_s
+    tries = ADOPT_RETRY_ATTEMPTS if attempts is None else attempts
+
+    for _ in range(max(1, tries)):
+        # Wait first: the caller has already probed once and found nothing.
+        await asyncio.sleep(interval)
+        cfg = config.load(force=True).llm
+        if cfg.model or cfg.provider == "offline":
+            return None
+        try:
+            adopted = await adopt_first_local()
+        except Exception as exc:
+            # Still a normal state, not a failure worth stopping for.
+            log.debug("background model discovery failed: %s", exc)
+            continue
+        if adopted:
+            return adopted
+    return None
+
+
 class LLMClient:
     def __init__(self, cfg: config.LLMConfig | None = None) -> None:
         self.cfg = cfg or config.load().llm

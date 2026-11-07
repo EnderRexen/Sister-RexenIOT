@@ -171,6 +171,25 @@ in
     };
 
     llm = {
+      afterLlamaSwap = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Start after `llama-swap.service`.
+
+          This only orders the start jobs; it does not wait for llama-swap to be
+          ready to accept connections, and llama-swap itself loads a model on
+          first request. It narrows the window in which the app probes before
+          the model server is listening -- the app also retries discovery in the
+          background, which is what actually closes it.
+
+          Off by default because the unit is only meaningful on a machine that
+          runs the llama-swap NixOS service; ordering against a unit that does
+          not exist is a no-op, but declaring it is the job of the config that
+          knows llama-swap is there.
+        '';
+      };
+
       provider = mkOption {
         type = types.enum [
           "auto"
@@ -214,7 +233,6 @@ in
     systemd.services.rexeniot = {
       description = "Sister RexenIOT voice assistant";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network.target" ];
 
       # [Unit] directive, so it belongs in unitConfig. Without it systemd may
       # start the service before the bulk-storage drive is mounted, and the
@@ -222,6 +240,11 @@ in
       unitConfig.RequiresMountsFor = optional (cfg.modelsDir != null) (
         toString cfg.modelsDir
       );
+
+      # `after` only orders start jobs; it does not wait for the model server to
+      # be ready to accept connections. It narrows the window rather than closing
+      # it, which is why the app also retries discovery in the background.
+      after = [ "network.target" ] ++ optional cfg.llm.afterLlamaSwap "llama-swap.service";
 
       environment = {
         REXENIOT_HOME = "/var/lib/rexeniot";

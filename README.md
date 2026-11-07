@@ -49,8 +49,10 @@ probes the usual ports and, if one answers, adopts the first model that server
 offers. On a machine already running llama-swap, Ollama or LM Studio, she can
 hold a conversation with no setup at all.
 
-Discovery runs once, and only while no model is configured. A model you choose
-later is never overwritten by a restart.
+If nothing answers yet — the model server may still be starting — she keeps
+looking in the background for a few minutes, so a server that comes up a moment
+later is picked up without a restart. Discovery only ever runs while no model is
+configured, so a model you choose later is never overwritten.
 
 To pick a different model, open the admin panel at `/admin` → **Model Backend**
 and press **Detect local models**: RexenIOT probes the usual ports and fills the
@@ -96,6 +98,19 @@ Leave those options unset — the default, and what the shipped
 `configuration.nix` does — to let the app find the model itself and the panel own
 the setting afterwards. Every other field (temperature, voice, wake words) is
 preserved either way.
+
+If the model server is a systemd unit on the same machine, order the service
+after it so the app does not start first and probe too early:
+
+```nix
+services.rexeniot.llm.afterLlamaSwap = true;   # orders after llama-swap.service
+```
+
+This is off by default, since it only means anything on a host that runs that
+unit. It is not required either way: the app retries discovery in the background
+for a few minutes after starting, so a model server that appears late is still
+picked up. Ordering only narrows the window — it does not wait for the server to
+be ready to accept connections.
 
 The **Detect local models** button is still useful in this case: it tells you the
 exact model name to put in the Nix file.
