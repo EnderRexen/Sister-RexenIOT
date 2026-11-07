@@ -450,6 +450,16 @@ identifiers, env vars, log names or filenames. The conventions are
 - **No browser MCP is connected** here ("No browser is connected"), so the
   agent cannot drive the GitHub UI — a human must create the repo and install
   the app. Blocked push therefore needs the user, not a retry.
+- **PUSH NOW WORKS (2026-11-07).** Once the `openhands-ai` app was installed
+  (`GET /user/installations` -> `total_count: 1`, `repository_selection: all`),
+  `git push` succeeded for both branches.
+- **Do NOT use `PATCH /repos/{owner}/{repo}` as a write-access probe** -- it
+  returns "Resource not accessible by integration" even when push works, because
+  the app is granted `contents: write` but NOT `administration`. Same for
+  `PUT /repos/{owner}/{repo}/topics`. This gave a false negative and nearly
+  derailed the diagnosis. Probe with the real operation (`git push`), not a
+  proxy. Repo description/topics can therefore only be set by the user, or by
+  granting the app `administration`.
 - Consequence: an agent session can commit locally but **cannot publish a new
   repo**. Ask the user to create the empty repo on GitHub first, then push to it.
 - The repo is prepared for that: branch renamed `master` -> `main`, origin set to
