@@ -65,12 +65,12 @@ one file, so the two cannot drift apart.
 3. A black window opens and works through six steps. **The first run is slow**
    (roughly 3–10 minutes): it downloads Python packages and then the voice model
    (~80 MB). Later runs skip all of it and start in seconds.
-4. Your browser opens **<http://localhost:8060/>** automatically.
+4. Your browser opens **<http://localhost:8070/>** automatically.
 
 Leave the black window open while you use the app. Closing it stops the server.
 Press `Ctrl+C` in that window to shut down cleanly.
 
-> **Port already in use?** If something else uses port 8060, the launcher warns
+> **Port already in use?** If something else uses port 8070, the launcher warns
 > you. You can change the port in the admin panel (Server tab) or by setting the
 > `REXENIOT_PORT` environment variable before starting.
 
@@ -88,7 +88,7 @@ Press `Ctrl+C` in that window to shut down cleanly.
 ## 3. First run: the admin panel
 
 The app opens on the **chat page**. Click the **gear icon** (top right) to open
-the **admin panel** at <http://localhost:8060/admin>.
+the **admin panel** at <http://localhost:8070/admin>.
 
 The admin panel has seven tabs. On a first run, visit them in this order:
 
@@ -384,15 +384,15 @@ full user permissions.
 
 ## 8. Using it day to day
 
-- **Chat page:** <http://localhost:8060/>
-- **Admin page:** <http://localhost:8060/admin>
+- **Chat page:** <http://localhost:8070/>
+- **Admin page:** <http://localhost:8070/admin>
 - **Stop the app:** `Ctrl+C` in the launcher window, or close it.
 - **Restart:** double-click `start.cmd` again. Your settings and downloaded models
   are reused, so it starts in seconds.
 
 To reach the app from your **phone or another device** on the same network, set
 the **host** to `0.0.0.0` in the Server tab (or pass `--host 0.0.0.0`). Then browse
-to `http://<your-pc-ip>:8060/`. **Set an admin token first** if you do this — it
+to `http://<your-pc-ip>:8070/`. **Set an admin token first** if you do this — it
 exposes the panel to your network.
 
 The interface is built to work on a phone, including in portrait.
@@ -410,7 +410,7 @@ The interface is built to work on a phone, including in portrait.
 | **"GPU detected, but the installed runtime cannot reach it"** | Install the GPU speech runtime (section 5). |
 | **Speech is slow** | You are on the CPU runtime. Install `requirements-gpu.txt`, or drop to a smaller voice tier. |
 | **Replies are very slow** | The model is too large for your VRAM and is spilling into RAM. Try `qwen3:8b`, or accept it for better answers. |
-| **Port 8060 already in use** | Close the other process, or set `REXENIOT_PORT` before starting. |
+| **Port 8070 already in use** | Close the other process, or set `REXENIOT_PORT` before starting. |
 | **Tools fail with "not configured"** | That integration has no credentials yet — see section 7. She reports this honestly rather than pretending success. |
 | **A skill disappeared after an update** | Built-in skills and personalities are re-seeded on load if missing. Your own edits are never overwritten. |
 
@@ -435,7 +435,7 @@ starting the app.
 
 | Variable | Purpose |
 |----------|---------|
-| `REXENIOT_PORT` | Port to serve on (default 8060). |
+| `REXENIOT_PORT` | Port to serve on (default 8070). |
 | `REXENIOT_HOME` | Store `data/` somewhere other than the app folder. |
 | `REXENIOT_PORTABLE` | Keep all state inside the app folder. |
 | `REXENIOT_API_KEY` | Model API key (overrides the stored one). |

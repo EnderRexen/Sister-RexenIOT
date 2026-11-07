@@ -27,7 +27,7 @@ per-word billing.
 Either launcher looks for a Python 3.10+ already on the machine and uses it if
 there is one; if there is none, it downloads a private Python (~30 MB) and uses
 that. It then creates a virtual environment, installs what is missing, starts the
-app and opens your browser at <http://localhost:8060>. The first run downloads
+app and opens your browser at <http://localhost:8070>. The first run downloads
 the voice model (~80 MB).
 
 Everything — runtime, packages, models, settings, chat history — stays inside the

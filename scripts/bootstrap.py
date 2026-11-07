@@ -382,7 +382,7 @@ def main() -> int:
     parser.add_argument("--venv", required=True, help="virtual environment folder")
     parser.add_argument("--req", required=True, help="requirements file to hash")
     parser.add_argument("--mark", required=True, help="file holding the installed hash")
-    parser.add_argument("--port", type=int, default=8060)
+    parser.add_argument("--port", type=int, default=8070)
     parser.add_argument("--host", default="localhost", help="host the browser opens")
     parser.add_argument("--bind", default="127.0.0.1", help="address the server binds")
     parser.add_argument("--folder", default="", help="the app folder, for display")

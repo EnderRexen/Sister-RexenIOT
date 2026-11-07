@@ -12,7 +12,7 @@ async def main():
             pg = await b.new_page(viewport={"width": w, "height": h}, device_scale_factor=2)
             errs = []
             pg.on("console", lambda m: errs.append(m.text) if m.type == "error" else None)
-            await pg.goto("http://127.0.0.1:8060/", wait_until="networkidle")
+            await pg.goto("http://127.0.0.1:8070/", wait_until="networkidle")
             await pg.wait_for_timeout(1500)
             m = await pg.evaluate("""() => {
                 const box = (s) => { const e = document.querySelector(s);

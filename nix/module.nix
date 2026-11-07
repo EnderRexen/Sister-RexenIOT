@@ -108,7 +108,7 @@ in
 
     port = mkOption {
       type = types.port;
-      default = 8060;
+      default = 8070;
       description = "Port to listen on. Defaults to the app's own default.";
     };
 

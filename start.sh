@@ -29,7 +29,7 @@ PYROOT="$RUNTIME/python"
 PY="$PYROOT/bin/python3"
 VENV="$RUNTIME/venv"
 MARK="$RUNTIME/.deps-hash"
-PORT="${REXENIOT_PORT:-8060}"
+PORT="${REXENIOT_PORT:-8070}"
 OFFLINE="${REXENIOT_OFFLINE:-0}"
 
 # Keep every byte of state inside the folder, including Hugging Face caches,

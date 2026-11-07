@@ -27,7 +27,7 @@ set "PY=%PYROOT%\python.exe"
 set "VENV=%RUNTIME%\venv"
 set "VPY=%VENV%\Scripts\python.exe"
 set "MARK=%RUNTIME%\.deps-hash"
-if not defined REXENIOT_PORT set "REXENIOT_PORT=8060"
+if not defined REXENIOT_PORT set "REXENIOT_PORT=8070"
 
 REM Keep every byte of state inside the folder.
 set "REXENIOT_HOME=%APP_DIR%"

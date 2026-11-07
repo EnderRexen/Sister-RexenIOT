@@ -17,7 +17,7 @@ from playwright.sync_api import sync_playwright
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8060"
+BASE = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8070"
 CLIP = "/tmp/rexeniot_fake_mic.wav"
 PHRASE = "Turn off the kitchen lights."
 CHROME = "/usr/bin/chromium"
