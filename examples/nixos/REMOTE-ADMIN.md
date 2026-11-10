@@ -5,6 +5,11 @@ The problem this directory solves: you are not at the machine, you cannot run
 That is a bootstrapping trap, and no amount of config on my side breaks it. What
 this setup does is make the *one* moment of access you get count.
 
+**If you have exactly one trip to the keyboard, use `one-shot.nix`.** It is the
+whole bootstrap in a single rebuild -- sshd for a way in, Tailscale for
+`operator=` so you never need root again, and RexenIOT on loopback. It
+supersedes `ssh.nix` and `remote-admin.nix`; use one or the other, not both.
+
 ## The trap, precisely
 
 | Step | Needs root? |

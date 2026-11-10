@@ -48,13 +48,19 @@ in
     # them is a "option does not exist" error, which is a safe failure but a
     # confusing one.
     settings = {
-      # Keys only. Do NOT set this until the key below is installed and you
-      # have confirmed you can log in with it -- password auth off with no
-      # working key is the classic way to lock yourself out of a remote box.
-      PasswordAuthentication = false;
-      KbdInteractiveAuthentication = false;
-      PermitRootLogin = "no";
+      # Bootstrap values: the ones that cannot lock you out.
+      #
+      # PasswordAuthentication stays ON for now. Turning it off in the same
+      # rebuild that first enables sshd strands the box if the key is not
+      # already working -- the classic way to lose a remote machine. Confirm
+      # key login first, then tighten.
+      PasswordAuthentication = true;
       PubkeyAuthentication = true;
+      PermitRootLogin = "no";
+
+      # Tighten to these in a later rebuild, once `ssh -i <key>` works:
+      #   PasswordAuthentication = false;
+      #   KbdInteractiveAuthentication = false;
     };
   };
 
