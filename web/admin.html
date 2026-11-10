@@ -29,8 +29,8 @@
 <!-- token gate -->
 <div class="gate" id="gate" hidden>
   <form class="gate-card" id="gate-form">
-    <h2>Admin token required</h2>
-    <p>Enter the token set in <code>ADMIN_TOKEN</code> or the config file.</p>
+    <h2 id="gate-title">Admin token required</h2>
+    <p id="gate-hint">Enter the token set in <code>ADMIN_TOKEN</code> or the config file.</p>
     <input type="password" id="gate-token" placeholder="Admin token" autocomplete="current-password" />
     <button class="btn-primary" type="submit">Unlock</button>
     <p class="gate-error" id="gate-error" hidden></p>

@@ -230,6 +230,27 @@ in
   };
 
   config = mkIf cfg.enable {
+    # The app refuses a non-loopback bind with no token (app/security.py).
+    # Catching it here turns a service that dies at startup into an evaluation
+    # error that names the option to set.
+    assertions = [
+      {
+        assertion = cfg.host == "127.0.0.1" || cfg.host == "::1" || cfg.host == "localhost" || cfg.environmentFile != null;
+        message = ''
+          services.rexeniot.host is set to "${cfg.host}", which is reachable from
+          your network, but no API token is configured. Every endpoint that can
+          drive the agent would be open to anyone who can reach this port.
+
+          Either keep the default loopback binding, or set
+          services.rexeniot.environmentFile to a file containing
+          REXENIOT_API_TOKEN=... (mode 0400, not in the world-readable Nix store).
+
+          For remote access, prefer a private overlay and leave the server on
+          loopback -- see docs/REMOTE-ACCESS.md.
+        '';
+      }
+    ];
+
     systemd.services.rexeniot = {
       description = "Sister RexenIOT voice assistant";
       wantedBy = [ "multi-user.target" ];

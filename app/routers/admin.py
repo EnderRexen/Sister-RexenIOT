@@ -17,18 +17,28 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .. import config, hardware, model_catalog, personalities, profiles, skills, uploads
 from ..hardware import directml_advice, nvidia_compute_cap, torch_gpu_advice
 from ..llm import LOCAL_CANDIDATES, client as llm_client, discover_local, probe_url
+from ..security import api_token, require_api_token
 from ..stt import available as stt_available, engine as stt_engine
 from ..tools import registry
 from ..tts import engine
 
 log = logging.getLogger("rexeniot.api.admin")
-router = APIRouter(prefix="/admin", tags=["admin"])
+
+#: Everything here is behind the API token as well as the admin token. The two
+#: guard different things: the API token is the perimeter (can this caller use
+#: the server at all), the admin token guards configuration writes. Without the
+#: first, an exposed server would let anyone reconfigure the agent.
+router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_api_token)])
+
+#: The one admin route that must answer before a caller has any token: it tells
+#: the panel whether a token is needed. Booleans only, never the token.
+public_router = APIRouter(prefix="/admin", tags=["admin"])
 
 
 # --------------------------------------------------------------------------- auth
@@ -53,11 +63,12 @@ def _check(token: str | None) -> None:
 # ----------------------------------------------------------------------- endpoints
 
 
-@router.get("/session")
+@public_router.get("/session")
 async def session() -> dict[str, Any]:
     """Whether the caller needs a token, and a digest of current state."""
     return {
         "requires_token": bool(_admin_token()),
+        "requires_api_token": bool(api_token()),
         "first_run_complete": config.load().first_run_complete,
     }
 

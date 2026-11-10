@@ -464,6 +464,7 @@ the request fails at completion time, not at discovery time.
 
 | Route | Purpose |
 |---|---|
+| `GET  /api/health` | Liveness, no token needed |
 | `POST /api/chat` | One turn, returns reply plus optional speech |
 | `POST /api/chat/stream` | Same, streamed as SSE |
 | `POST /api/speak` | Text → WAV |
@@ -480,7 +481,8 @@ the request fails at completion time, not at discovery time.
 | `POST /api/admin/skills/restore` | Re-add missing built-in skills |
 | `POST /api/admin/integrations/test` | Probe one integration (`alexa` included) |
 
-Interactive docs at `/docs`.
+Every route except `/api/health` requires the API token when one is configured
+(see below). Interactive docs at `/docs`.
 
 ## Configuration
 
@@ -493,6 +495,7 @@ Environment variables take precedence:
 | Variable | Effect |
 |---|---|
 | `REXENIOT_API_KEY` | API key for the chat backend |
+| `REXENIOT_API_TOKEN` | Require this token (`X-API-Token`) on every route but `/api/health` |
 | `ADMIN_TOKEN` | Require this token for every admin write |
 | `HOME_ASSISTANT_TOKEN` | Home Assistant token |
 | `MQTT_PASSWORD` | MQTT password |
@@ -502,8 +505,13 @@ Environment variables take precedence:
 | `ALEXACLI_PATH` | Full path to the `alexacli` binary |
 | `ALEXACLI_DEVICE` | Default Echo device for alexacli |
 
-Set `ADMIN_TOKEN` if the app is reachable by anyone but you — binding to
-`0.0.0.0` exposes it to your network.
+The server binds to `127.0.0.1` by default, so only this machine can reach it.
+If you bind it to anything else it refuses to start without `REXENIOT_API_TOKEN`
+set — reaching the API means being able to drive the agent's tools, so an
+unauthenticated agent on a network is a breach rather than a nuisance. See
+[docs/SECURITY.md](docs/SECURITY.md) for the model and
+[docs/REMOTE-ACCESS.md](docs/REMOTE-ACCESS.md) for reaching it from your phone
+without exposing it.
 
 ## Requirements
 

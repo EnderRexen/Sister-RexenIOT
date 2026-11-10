@@ -23,6 +23,24 @@ WLOG=/tmp/rexeniot_watchdog.log
 PIDFILE=/tmp/rexeniot_server.pid
 LOCKFILE=/tmp/rexeniot_watchdog.lock
 PY="$PWD/.venv/bin/python"
+TOKENFILE=/tmp/rexeniot_api_token
+
+# The preview proxy connects from outside this container, so the server has to
+# listen on 0.0.0.0 here -- loopback would be unreachable. That is safe because
+# the container's network is isolated, but it is *not* safe on a home LAN, so
+# the server now refuses a non-loopback bind without a token. Mint one if the
+# environment does not already provide it; it is written to $TOKENFILE and
+# printed in the log so the UI gate can be answered.
+if [ -z "${REXENIOT_API_TOKEN:-}" ]; then
+  if [ -f "$TOKENFILE" ]; then
+    REXENIOT_API_TOKEN="$(cat "$TOKENFILE")"
+  else
+    REXENIOT_API_TOKEN="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    printf '%s' "$REXENIOT_API_TOKEN" > "$TOKENFILE"
+    chmod 600 "$TOKENFILE"
+  fi
+  export REXENIOT_API_TOKEN
+fi
 
 #: How long to leave a freshly started server alone, in seconds. Must exceed the
 #: worst-case TTS warm-up or the loop will restart a healthy-but-busy server.

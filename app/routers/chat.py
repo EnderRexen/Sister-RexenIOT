@@ -9,18 +9,19 @@ import re
 import time
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .. import agent, config, personalities, uploads
 from ..llm import client as llm_client
+from ..security import require_api_token
 from ..stt import STTError, available as stt_available, engine as stt_engine
 from ..tools import builtin as builtin_tools
 from ..tts import TTSError, engine
 
 log = logging.getLogger("rexeniot.api.chat")
-router = APIRouter(tags=["chat"])
+router = APIRouter(tags=["chat"], dependencies=[Depends(require_api_token)])
 
 #: Characters that TTS engines read badly; stripped before speaking.
 _SPEAK_STRIP = re.compile(r"```.*?```|`([^`]*)`|[*_#>|]|\bhttps?://\S+", re.S)

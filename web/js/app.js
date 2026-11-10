@@ -10,6 +10,71 @@ import { initOnScreenKeyboard } from "./osk.js";
 
 const $ = (sel) => document.querySelector(sel);
 
+/* --------------------------------------------------------------- API token */
+
+/* Kept in sessionStorage: it survives a reload but not a browser restart, and
+   never leaves this machine. When the server is on loopback and has no token
+   configured these are all no-ops. */
+const TOKEN_KEY = "rexeniot_api_token";
+
+function getToken() {
+  return sessionStorage.getItem(TOKEN_KEY) || "";
+}
+
+function setToken(value) {
+  if (value) sessionStorage.setItem(TOKEN_KEY, value);
+  else sessionStorage.removeItem(TOKEN_KEY);
+}
+
+function authHeaders(extra = {}) {
+  const token = getToken();
+  return token ? { ...extra, "X-API-Token": token } : { ...extra };
+}
+
+/** Ask the server whether it needs a token, without needing one ourselves. */
+async function serverRequiresToken() {
+  try {
+    const res = await fetch("/api/health");
+    if (!res.ok) return false;
+    const body = await res.json();
+    return body.requires_token === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Resolve once the user has supplied a working token (or none is needed). */
+function awaitTokenIfRequired() {
+  return new Promise(async (resolve) => {
+    if (!(await serverRequiresToken()) || getToken()) {
+      resolve(true);
+      return;
+    }
+    const gate = $("#gate");
+    const form = $("#gate-form");
+    const input = $("#gate-token");
+    const err = $("#gate-error");
+    $("#boot").classList.add("done");
+    gate.hidden = false;
+    input.focus();
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const candidate = input.value.trim();
+      if (!candidate) return;
+      try {
+        const res = await fetch("/api/status", { headers: { "X-API-Token": candidate } });
+        if (!res.ok) throw new Error("rejected");
+        setToken(candidate);
+        gate.hidden = true;
+        resolve(true);
+      } catch {
+        err.textContent = "That token was not accepted.";
+        input.select();
+      }
+    });
+  });
+}
+
 const state = {
   personalities: [],
   active: null,
@@ -57,8 +122,8 @@ function toast(message, kind = "") {
 
 async function api(path, options = {}) {
   const res = await fetch(`/api${path}`, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers: authHeaders({ "Content-Type": "application/json", ...(options.headers || {}) }),
   });
   if (!res.ok) {
     let detail = `HTTP ${res.status}`;
@@ -370,7 +435,7 @@ async function speak(text, opts = {}) {
     stopSpeaking();
     const res = await fetch("/api/speak", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         text,
         personality_id: state.active?.id,
@@ -1060,7 +1125,7 @@ async function transcribeRecording(blob) {
   try {
     const form = new FormData();
     form.append("audio", blob, "speech.webm");
-    const res = await fetch("/api/transcribe", { method: "POST", body: form });
+    const res = await fetch("/api/transcribe", { method: "POST", headers: authHeaders(), body: form });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
     const text = (data.text || "").trim();
@@ -1152,7 +1217,7 @@ async function uploadFiles(fileList) {
 
   toast(`Reading ${files.length} file${files.length > 1 ? "s" : ""}…`);
   try {
-    const res = await fetch("/api/uploads", { method: "POST", body: form });
+    const res = await fetch("/api/uploads", { method: "POST", headers: authHeaders(), body: form });
     const body = await res.json();
     if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
     for (const file of body.files || []) state.attachments.push(file);
@@ -1214,7 +1279,7 @@ async function sendText(text) {
   try {
     const res = await fetch("/api/chat/stream", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         message: clean,
         personality_id: state.active?.id,
@@ -1581,6 +1646,7 @@ async function boot() {
   const status = $("#boot-status");
   try {
     status.textContent = "Loading personalities…";
+    await awaitTokenIfRequired();
     await loadPersonalities();
     status.textContent = "Checking systems…";
     await loadPublicConfig();

@@ -40,9 +40,25 @@ function setSaveState(text, kind = "") {
   pill.querySelector("span").textContent = text;
 }
 
+/* The admin panel needs two credentials, and they are independent: the API
+   token (shared with the main UI) guards every route, and the admin token
+   guards configuration writes. Send both. */
+const API_TOKEN_KEY = "rexeniot_api_token";
+
+function apiToken() {
+  return sessionStorage.getItem(API_TOKEN_KEY) || "";
+}
+
+function setApiToken(value) {
+  if (value) sessionStorage.setItem(API_TOKEN_KEY, value);
+  else sessionStorage.removeItem(API_TOKEN_KEY);
+}
+
 async function api(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
   if (state.token) headers["X-Admin-Token"] = state.token;
+  const token = apiToken();
+  if (token) headers["X-API-Token"] = token;
   const res = await fetch(`/api${path}`, { ...options, headers });
   if (res.status === 401) {
     showGate(true);
@@ -68,15 +84,48 @@ function escapeHtml(t) {
 
 /* ------------------------------------------------------------------ gate */
 
-function showGate(show) {
+/* The panel can need two tokens, and they are collected in order: the API token
+   is the perimeter (no route answers without it), the admin token guards config
+   writes. gateMode says which one the form is currently asking for. */
+let gateMode = "admin";
+
+function showGate(show, { title, hint, placeholder } = {}) {
+  if (title) $("#gate-title").textContent = title;
+  if (hint) $("#gate-hint").textContent = hint;
+  if (placeholder) $("#gate-token").placeholder = placeholder;
   $("#gate").hidden = !show;
+  if (show) $("#gate-token").focus();
+}
+
+function gateError(message) {
+  const err = $("#gate-error");
+  if (!message) { err.hidden = true; return; }
+  err.textContent = message;
+  err.hidden = false;
 }
 
 async function checkSession() {
   try {
     const s = await api("/admin/session");
+    if (s.requires_api_token && !apiToken()) {
+      gateMode = "api";
+      showGate(true, {
+        title: "API token required",
+        hint: "Enter the token set in REXENIOT_API_TOKEN or server.auth_token.",
+        placeholder: "API token",
+      });
+      return false;
+    }
     if (!s.requires_token) { showGate(false); return true; }
-    if (!state.token) { showGate(true); return false; }
+    if (!state.token) {
+      gateMode = "admin";
+      showGate(true, {
+        title: "Admin token required",
+        hint: "Enter the token set in ADMIN_TOKEN or the config file.",
+        placeholder: "Admin token",
+      });
+      return false;
+    }
     try {
       await api("/admin/verify", { method: "POST" });
       showGate(false);
@@ -84,7 +133,12 @@ async function checkSession() {
     } catch {
       sessionStorage.removeItem("rexeniot_admin_token");
       state.token = "";
-      showGate(true);
+      gateMode = "admin";
+      showGate(true, {
+        title: "Admin token required",
+        hint: "Enter the token set in ADMIN_TOKEN or the config file.",
+        placeholder: "Admin token",
+      });
       return false;
     }
   } catch (err) {
@@ -1326,15 +1380,29 @@ function wireEvents() {
 
   $("#gate-form").addEventListener("submit", async (e) => {
     e.preventDefault();
-    state.token = $("#gate-token").value.trim();
+    const value = $("#gate-token").value.trim();
+    gateError("");
+    if (gateMode === "api") {
+      // Validate the API token on its own. checkSession() also reports on the
+      // admin token, so its false would otherwise be misread as this token
+      // being wrong and clear a good value.
+      setApiToken(value);
+      try {
+        await api("/status");
+      } catch {
+        setApiToken("");
+        gateError("That token was not accepted.");
+        return;
+      }
+      if (await checkSession()) boot();
+      return;
+    }
+    state.token = value;
     sessionStorage.setItem("rexeniot_admin_token", state.token);
-    $("#gate-error").hidden = true;
     if (await checkSession()) {
       boot();
     } else {
-      const err = $("#gate-error");
-      err.textContent = "That token was not accepted.";
-      err.hidden = false;
+      gateError("That token was not accepted.");
     }
   });
 
@@ -1492,7 +1560,7 @@ async function boot() {
     await loadPersonalities();
     populateVoiceSelectors();
 
-    const voices = await fetch("/api/voices").then((r) => r.json()).catch(() => ({ voices: [] }));
+    const voices = await api("/voices").then((r) => r.json()).catch(() => ({ voices: [] }));
     state.voices = voices.voices || [];
     populateVoiceSelectors();
     // Re-apply the stored values now that the option lists exist.

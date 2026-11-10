@@ -45,6 +45,11 @@ class ServerConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8070
     open_browser: bool = True
+    #: Bearer token for the whole API. Empty means "no token", which is only
+    #: allowed while ``host`` is a loopback address -- see app/security.py.
+    #: ``REXENIOT_API_TOKEN`` overrides this so the value can stay out of the
+    #: config file.
+    auth_token: str = ""
 
 
 class LLMConfig(BaseModel):

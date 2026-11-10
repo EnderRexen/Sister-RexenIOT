@@ -36,7 +36,7 @@ else
 fi
 
 # --- app + watchdog ------------------------------------------------------------
-if up "http://127.0.0.1:${APP_PORT}/api/status"; then
+if up "http://127.0.0.1:${APP_PORT}/api/health"; then
   echo "app    : already up on ${APP_PORT}"
 else
   echo "app    : starting on ${APP_PORT} ..."
@@ -44,12 +44,12 @@ else
   REXENIOT_PORT="${APP_PORT}" nohup bash ./scripts/keep-alive.sh > /dev/null 2>&1 &
   # Cold start loads KittenTTS; allow a generous window before declaring failure.
   for _ in $(seq 1 60); do
-    up "http://127.0.0.1:${APP_PORT}/api/status" && break
+    up "http://127.0.0.1:${APP_PORT}/api/health" && break
     sleep 3
   done
 fi
 
-if up "http://127.0.0.1:${APP_PORT}/api/status"; then
+if up "http://127.0.0.1:${APP_PORT}/api/health"; then
   echo "app    : ready on ${APP_PORT}"
   echo "url    : https://work-1-dsytpcehntqnlxzx.prod-runtime.all-hands.dev/"
 else

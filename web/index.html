@@ -18,6 +18,23 @@
     </div>
   </div>
 
+  <!-- ============================= token gate ============================= -->
+  <!-- Shown only when the server requires an API token and we do not have one
+       yet. Reuses the boot overlay's styling so it looks native. -->
+  <div id="gate" class="boot" hidden>
+    <div class="boot-inner">
+      <div class="boot-ring"><span></span><span></span><span></span></div>
+      <h1 class="boot-title">Sister RexenIOT</h1>
+      <p class="boot-status">This server requires an API token.</p>
+      <form id="gate-form" autocomplete="off">
+        <input id="gate-token" type="password" placeholder="API token"
+               autocomplete="current-password" aria-label="API token" />
+        <button id="gate-submit" type="submit">Unlock</button>
+      </form>
+      <p class="boot-status" id="gate-error" role="alert"></p>
+    </div>
+  </div>
+
   <!-- ================================ shell ================================ -->
   <div class="app" id="app" hidden>
     <!-- ------------------------------- header ------------------------------ -->

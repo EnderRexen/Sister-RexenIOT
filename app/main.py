@@ -21,10 +21,22 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__, config, hardware, model_catalog, personalities
 from .llm import adopt_first_local, adopt_first_local_in_background
 from .routers import admin, chat, status
+from .security import assert_binding_is_safe
 from .stt import available as stt_available, engine as stt_engine
 from .tts import engine
 
 log = logging.getLogger("rexeniot")
+
+
+def _dev_origins() -> list[str]:
+    """Origins allowed to call the API from a browser.
+
+    The UI is served from the same origin and needs no grant. Anything else is
+    restricted to loopback, so a website you happen to visit cannot script this
+    agent in your browser. ``allow_origins=["*"]`` used to do exactly that.
+    """
+    port = config.load().server.port
+    return [f"http://127.0.0.1:{port}", f"http://localhost:{port}"]
 
 
 def configure_logging() -> None:
@@ -139,8 +151,7 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(
         CORSMiddleware,
-        # The UI is served from the same origin, but allow local dev tools too.
-        allow_origins=["*"],
+        allow_origins=_dev_origins(),
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -148,6 +159,7 @@ def create_app() -> FastAPI:
 
     app.include_router(status.router, prefix="/api")
     app.include_router(chat.router, prefix="/api")
+    app.include_router(admin.public_router, prefix="/api")
     app.include_router(admin.router, prefix="/api")
 
     @app.get("/apple-touch-icon.png", include_in_schema=False)
@@ -342,6 +354,10 @@ def main() -> None:
     cfg = config.load()
     host = args.host or cfg.server.host
     port = args.port or cfg.server.port
+
+    # Refuse to expose an unauthenticated agent. This runs before the socket
+    # opens, so a misconfiguration cannot be reached even briefly.
+    assert_binding_is_safe(host, port)
 
     if not args.no_browser and cfg.server.open_browser:
         import threading
