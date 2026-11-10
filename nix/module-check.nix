@@ -135,6 +135,32 @@ let
       else
         "ExecStart must carry the configured port"
     )
+    # The binding guard. NixOS assertions are only thrown when the system is
+    # built, so forcing a service does not exercise them; this inspects their
+    # values directly, which is the same condition NixOS checks, run earlier.
+    (
+      let
+        bad = evalWith {
+          services.rexeniot.enable = true;
+          services.rexeniot.host = "0.0.0.0";
+        };
+        guard = builtins.filter (a: lib.hasInfix "reachable from" a.message) bad.config.assertions;
+      in
+      if lib.any (a: !a.assertion) guard then
+        null
+      else
+        "a non-loopback host with no token must trip the binding assertion"
+    )
+    (
+      let
+        good = evalWith { services.rexeniot.enable = true; };
+        guard = builtins.filter (a: lib.hasInfix "reachable from" a.message) good.config.assertions;
+      in
+      if guard != [ ] && lib.all (a: a.assertion) guard then
+        null
+      else
+        "the default loopback config must satisfy the binding assertion"
+    )
   ];
 in
 if failures == [ ] then

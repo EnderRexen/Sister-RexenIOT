@@ -76,6 +76,10 @@ AllowedIPs = 10.0.0.2/32
 
 ## NixOS
 
+A ready-to-merge config is in [`examples/nixos/`](../examples/nixos/README.md):
+a `configuration.nix` fragment and a standalone flake, both leaving the service
+on loopback with `tailscale serve` publishing it.
+
 Tailscale is in nixpkgs; the NixOS wiki's Tailscale page covers the service
 options. The short form:
 
@@ -84,7 +88,8 @@ services.tailscale.enable = true;
 ```
 
 Leave `services.rexeniot.host` at its default. `tailscale serve` does the rest,
-and the module's assertion stays satisfied.
+and the module's assertion stays satisfied. Remember to enable MagicDNS and
+HTTPS Certificates for the tailnet, or `serve` has no certificate to use.
 
 ## Mobile clients
 
