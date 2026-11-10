@@ -605,3 +605,37 @@ identifiers, env vars, log names or filenames. The conventions are
   normal run (`--stt`, on by default; `REXENIOT_NO_STT=1` to skip). Voice *output*
   (KittenTTS) is local as before. See the 2026-10-22 log for the PyAV workaround.
 
+## API auth (added 2026-11-04, branch `security/api-token`)
+- Every `/api` route needs `X-API-Token` (from `REXENIOT_API_TOKEN` or
+  `server.auth_token`) once a token is set, **except** `/api/health` and
+  `/api/admin/session`, which are open by design (watchdog probes and the UI's
+  "do I need a token" check). Do not gate those two.
+- `app/security.py` owns the check; `assert_binding_is_safe()` in `main()` and
+  an `assertions` entry in `nix/module.nix` both refuse a non-loopback bind
+  with no token.
+- CORS is loopback-only now (was `allow_origins=["*"]`).
+- `scripts/test_api_auth.py` is the regression test; a `app.openapi()` sweep
+  asserts no `/api` route is reachable without a token.
+
+## Local models and tool gating (added 2026-11-10, branch `security/api-token`)
+- **Reasoning models must be told not to think.** Ollama's qwen3 / deepseek-r1
+  emit a hidden trace that eats the whole `max_tokens` budget (23s vs 3s, and an
+  empty reply at a low cap). Send `reasoning_effort: "none"` in the
+  OpenAI-compatible body; on the `/v1` path Ollama ignores `think: false` and
+  ignores `/no_think`. `reasoning_effort_for()` in `app/llm/client.py` defaults
+  to `none` for those model names; `llm.reasoning_effort` overrides it, and
+  `"default"` means "send nothing".
+- A skill with **no** `provider_field` used to publish its tools unconditionally.
+  Skills now also declare `config_fields` (any one set activates it); `home`
+  needs `home_assistant_url` or `mqtt_host`, `images` needs `comfyui_url`.
+- `org.kde.KWin.queryWindowInfo` / `killWindow` are **interactive** (mouse grab)
+  and hang headlessly, then raise `Error.UserCancel`. Do not build window tools
+  on them. `control_media` enumerates `org.mpris.MediaPlayer2.*` on the bus.
+- Desktop tools read `WAYLAND_DISPLAY`/`DISPLAY` from a plasmashell PID's
+  `/proc/<pid>/environ`; a systemd unit has none of them.
+- Regression tests: `scripts/test_reasoning_and_gating.py` (drives a real
+  `chat()` against a recording stand-in server) and `scripts/test_desktop_tools.py`.
+- Sandbox: `/tmp` and the toolchain (ssh, paramiko, tailscaled SOCKS proxy) are
+  wiped between turns. No `ssh` binary and no root; use
+  `/workspace/.access/rexen.py` (paramiko over the SOCKS5 proxy, reads stdin).
+  tailscaled needs `--socks5-server=127.0.0.1:1055`, which `ts-up.sh` omits.

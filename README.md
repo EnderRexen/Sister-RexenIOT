@@ -327,6 +327,22 @@ independently — a missing one disables only its own tools.
 | `remember` / `recall` | Durable facts about you and the home | — |
 | `share_file` | Send a file to the chat as a preview or download | — |
 
+Desktop tools are added by the Desktop skill. They drive the KDE Plasma session
+the app runs in, so they need the app to run as the desktop user on the same
+machine rather than in a container of its own:
+
+| Tool | Does | Requires |
+|---|---|---|
+| `notify_user` | Post a desktop notification | A session bus |
+| `open_app` | Launch an installed application by name | A `.desktop` entry |
+| `list_apps` | List launchable applications | — |
+| `control_media` | Play/pause, skip, or report what is playing | A player on the session bus |
+| `set_power_profile` | Power saver, balanced or performance | PowerDevil |
+
+`control_media` talks MPRIS, so it drives whichever player is currently
+exporting itself rather than a fixed list. It reports that nothing is playing
+instead of failing obscurely.
+
 Alexa tools are added by the Alexa skill, and only when a provider is set:
 
 | Tool | Does | Requires |
@@ -368,13 +384,18 @@ and claims the tools that go with it, so turning one off removes both — her
 prompt stops mentioning the capability and the tools disappear from the model's
 list, rather than being offered and failing.
 
-Built-ins: **Home**, **Computer**, **Web**, **Memory**, **Timers**, **Images**
-and **Alexa**. Add your own from the admin panel with a name, an instruction
-block and the tools it owns. Layout: `app/skills.py`.
+Built-ins: **Home**, **Computer**, **Web**, **Memory**, **Timers**, **Images**,
+**Desktop** and **Alexa**. Add your own from the admin panel with a name, an
+instruction block and the tools it owns. Layout: `app/skills.py`.
 
 A skill can also declare a `provider_field`. The Alexa skill is available only
 once a provider is configured, so an unconfigured bridge never shows the model
-tools that could only fail.
+tools that could only fail. A skill with more than one possible backend declares
+`config_fields` instead: **Home** names both the Home Assistant URL and the MQTT
+broker and stays dormant until one of them is set, and **Images** waits for the
+ComfyUI URL. This is what keeps an unconfigured install from offering a dozen
+tools that can only return an error, which also costs prompt tokens on every
+single turn.
 
 ## Alexa
 

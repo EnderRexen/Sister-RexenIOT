@@ -43,6 +43,9 @@ class Skill(BaseModel):
     tools: list[str] = Field(default_factory=list)
     #: Config field whose value gates availability, e.g. "alexa_provider".
     provider_field: str = ""
+    #: ToolConfig fields where any one being set makes the skill usable. Used
+    #: when there is no single provider_field, e.g. Home Assistant or MQTT.
+    config_fields: list[str] = Field(default_factory=list)
     #: Human-readable prerequisites, shown in the admin panel.
     requires: str = ""
     enabled: bool = True
@@ -71,6 +74,7 @@ BUILTIN: list[dict[str, Any]] = [
             "mqtt_publish",
         ],
         "requires": "Home Assistant URL + token, or an MQTT broker",
+        "config_fields": ["home_assistant_url", "mqtt_host"],
     },
     {
         "id": "computer",
@@ -133,6 +137,7 @@ BUILTIN: list[dict[str, Any]] = [
         ),
         "tools": ["generate_image", "comfyui_status"],
         "requires": "ComfyUI URL",
+        "config_fields": ["comfyui_url"],
     },
     {
         "id": "alexa",
@@ -154,6 +159,30 @@ BUILTIN: list[dict[str, Any]] = [
         "tools": ["alexa_devices", "alexa_speak", "alexa_command", "alexa_ask", "alexa_routine"],
         "provider_field": "alexa_provider",
         "requires": "An Alexa provider: Voice Monkey token, the alexacli CLI, or Home Assistant",
+    },
+    {
+        "id": "desktop",
+        "name": "Desktop",
+        "tagline": "Apps, notifications, media and power on this machine",
+        "description": (
+            "Drive the KDE Plasma desktop directly: post a notification the user will see, "
+            "open an installed application, control media playback, and switch the power profile."
+        ),
+        "instructions": (
+            "Skill: Desktop. You can act on the user's graphical session. Use notify_user "
+            "rather than only answering in chat when the user should see something on screen. "
+            "Use open_app with an application name; list_apps first if you are unsure it is "
+            "installed. control_media drives whichever player currently exposes itself on the "
+            "session bus, so it fails cleanly when nothing is playing."
+        ),
+        "tools": [
+            "notify_user",
+            "open_app",
+            "list_apps",
+            "control_media",
+            "set_power_profile",
+        ],
+        "requires": "A KDE Plasma desktop session on the same machine",
     },
 ]
 
@@ -262,6 +291,11 @@ def restore_builtins() -> list[Skill]:
 
 def _provider_configured(skill: Skill, tools_cfg: Any) -> bool:
     if not skill.provider_field:
+        # No single provider field, but the skill still names the config it
+        # needs: an unconfigured Home Assistant or ComfyUI must not be offered
+        # to the model as a tool that can only fail.
+        if skill.config_fields:
+            return any(bool(getattr(tools_cfg, field, "")) for field in skill.config_fields)
         return True
     if skill.provider_field == "alexa_provider":
         return bool(tools_cfg.resolved_alexa_provider())

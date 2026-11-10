@@ -300,6 +300,16 @@
         <label>History turns kept
           <input name="llm.history_turns" data-cfg="llm.history_turns" type="number" min="0" max="60" />
         </label>
+        <label>Reasoning effort
+          <select name="llm.reasoning_effort" data-cfg="llm.reasoning_effort">
+            <option value="">Auto (off for reasoning models)</option>
+            <option value="default">Model default</option>
+            <option value="none">Off</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+        </label>
         <label>Request timeout (s)
           <input name="llm.timeout_s" data-cfg="llm.timeout_s" type="number" min="5" max="600" />
         </label>

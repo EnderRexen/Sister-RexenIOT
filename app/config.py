@@ -68,6 +68,12 @@ class LLMConfig(BaseModel):
     timeout_s: float = 120.0
     system_prompt_extra: str = ""
     history_turns: int = 12
+    #: How much hidden reasoning a reasoning model may do before answering.
+    #: "none" suppresses the trace, which is the difference between a local
+    #: model answering in a second and spending its whole output budget
+    #: thinking. "default" leaves the field off; low/medium/high tune it.
+    #: Empty means "decide from the model name".
+    reasoning_effort: Literal["", "default", "none", "low", "medium", "high"] = ""
 
     def resolved_api_key(self) -> str:
         """Environment wins over the stored value so keys stay out of the repo."""

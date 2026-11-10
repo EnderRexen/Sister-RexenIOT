@@ -49,6 +49,29 @@ def detect_provider(cfg: config.LLMConfig) -> str:
     return "openai"
 
 
+#: Model families that emit a hidden reasoning trace before the answer.
+_REASONING_MARKERS = ("qwen3", "qwq", "deepseek-r1", "magistral", "glm-z", "o1", "o3", "o4")
+
+
+def reasoning_effort_for(cfg: config.LLMConfig, provider: str) -> str:
+    """How much hidden reasoning to ask for, or "" to send no such field.
+
+    A reasoning model on a local box spends its whole ``max_tokens`` budget on
+    the trace and can return an empty answer, so the default here is to turn
+    the trace off for models known to produce one. An explicit
+    ``llm.reasoning_effort`` always wins. Anthropic has no equivalent field.
+    """
+    if provider == "anthropic":
+        return ""
+    setting = (cfg.reasoning_effort or "").strip().lower()
+    if setting:
+        return "" if setting == "default" else setting
+    name = (cfg.model or "").lower()
+    if any(marker in name for marker in _REASONING_MARKERS):
+        return "none"
+    return ""
+
+
 def _normalize_base_url(provider: str, base_url: str) -> str:
     url = (base_url or "").strip().rstrip("/")
     if provider == "anthropic":
@@ -325,6 +348,9 @@ class LLMClient:
             "max_tokens": max_tokens,
             "messages": messages,
         }
+        effort = reasoning_effort_for(self.cfg, provider)
+        if effort:
+            body["reasoning_effort"] = effort
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
@@ -538,6 +564,9 @@ class LLMClient:
                 "messages": messages,
                 "stream": True,
             }
+            effort = reasoning_effort_for(self.cfg, provider)
+            if effort:
+                body["reasoning_effort"] = effort
             if tools:
                 body["tools"] = tools
             url = f"{self.base_url}/chat/completions"
