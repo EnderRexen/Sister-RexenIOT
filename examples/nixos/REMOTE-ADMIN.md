@@ -78,14 +78,73 @@ route, no credential. If you have no physical access, no existing remote path,
 and no one who can run a command for you, the machine needs to be reached
 another way before any of this applies.
 
+## SSH: two paths, and the one that needs no root
+
+`ssh.nix` sets up both, deliberately:
+
+**Tailscale SSH** (`extraUpFlags = [ "--ssh" ]`) runs sshd inside `tailscaled`.
+No port 22, no firewall rule, no keys to distribute -- authorisation comes from
+the `ssh` section of your tailnet ACL policy. For a machine you are not sitting
+at, this is the path that saves you, because there is nothing to expose and no
+key to get wrong. It needs the tailnet up, which needs the one root step.
+
+**Plain `services.openssh`** on port 22 is the fallback for when the tailnet is
+down. It needs a firewall hole and key management.
+
+### The part that needs no root
+
+If you can already reach the machine over SSH *at all* -- even with a password --
+then installing a key needs no root. `~/.ssh/authorized_keys` is a file in your
+own home directory:
+
+```bash
+# on your client, not the server
+ssh-keygen -t ed25519 -C "you@client"          # if you have no key yet
+ssh-copy-id you@REXEN-NIXOS-DT                 # appends your .pub to the server
+```
+
+That is a user-level change. What *does* need root is turning password
+authentication off, and that is deliberate: it is the setting that locks you out
+if the key is wrong. Do it in a later rebuild, after you have confirmed the key
+works.
+
+### The lockout order, which matters more than the config
+
+Applying `ssh.nix` as written turns password auth off in the same rebuild that
+first enables sshd. If your key is not already installed and working, that
+rebuild leaves you with a machine you cannot reach at all. So:
+
+1. Enable sshd with `PasswordAuthentication = true`. Rebuild. Confirm you can
+   log in from your client.
+2. Install your key (`ssh-copy-id`). Confirm `ssh -i ~/.ssh/id_ed25519 you@host`
+   works with the key alone.
+3. *Then* flip `PasswordAuthentication = false` and rebuild.
+
+The comment in `ssh.nix` says this too, next to the option itself, because that
+is where someone will read it.
+
+### `openFirewall = true` is the same class of decision
+
+It exposes port 22 on every interface. If the machine is only ever reached over
+the tailnet, set it to `false` and let Tailscale carry the traffic -- Tailscale
+SSH needs no port open at all.
+
 ## What is verified here and what is not
 
-Verified against upstream sources: the `authKeyFile` and `extraSetFlags` options
-exist and behave as described; `tailscale serve` needs no root for port
-forwarding; only `http://127.0.0.1` is supported as a `serve` proxy target;
-`REXEN-NIXOS-DT` is a valid hostname (nixpkgs allows uppercase, systemd's LDH
-check uses `ascii_isalpha`).
+Verified against upstream sources: the `authKeyFile`, `extraSetFlags` and
+`extraUpFlags` options exist and behave as described; `services.openssh` has
+`enable`, `ports`, `openFirewall` and `settings` (the modern names -- the old
+top-level `passwordAuthentication` was removed); `tailscale serve` needs no root
+for port forwarding; only `http://127.0.0.1` is supported as a `serve` proxy
+target; `REXEN-NIXOS-DT` is a valid hostname (nixpkgs allows uppercase,
+systemd's LDH check uses `ascii_isalpha`).
 
-Not verified: anything actually running. There is no Nix daemon in the
-development sandbox, so `nixos-rebuild` on your machine is the first real test.
-It fails loudly on an unknown option, which is the behaviour you want.
+Verified by execution, in the development sandbox: the sshd settings above were
+checked with a real `sshd -t` (OpenSSH 10.0p2), which accepts the intended
+config and rejects a deliberately bogus option -- so the check has teeth, and
+`sshd -T` confirms the effective values are `passwordauthentication no`,
+`permitrootlogin no`, `pubkeyauthentication yes`.
+
+Not verified: anything running on your machine. There is no Nix daemon in the
+sandbox, so `nixos-rebuild` there is the first real test. It fails loudly on an
+unknown option, which is the behaviour you want.
