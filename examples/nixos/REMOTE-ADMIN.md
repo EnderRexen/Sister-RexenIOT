@@ -134,6 +134,37 @@ It exposes port 22 on every interface. If the machine is only ever reached over
 the tailnet, set it to `false` and let Tailscale carry the traffic -- Tailscale
 SSH needs no port open at all.
 
+## TeamViewer, and what it does not solve
+
+`one-shot.nix` also enables `services.teamviewer`, because you are already at the
+keyboard for one rebuild so it costs nothing extra. Two things to be clear about:
+
+**It does not remove the root step.** The module installs a root systemd service
+(`systemd.services.teamviewerd`), so enabling it is the same
+`nixos-rebuild switch` you cannot run. It cannot bootstrap itself.
+
+**It gives you a picture, not a shell.** You can look at the desktop and drive
+the mouse and keyboard, but you cannot run `nixos-rebuild`, read `journalctl`, or
+script anything. For managing the machine, the SSH path is the one that matters.
+TeamViewer is the fallback for when you need to see the screen.
+
+The package is `unfree`, so it needs `nixpkgs.config.allowUnfreePackages =
+[ "teamviewer" ]` -- the narrow form, which allows that one package rather than
+opening the door to all unfree software. It is x86_64-linux and aarch64-linux
+only.
+
+X11 is confirmed, so screen capture works. On Wayland the Linux client cannot
+share the screen, and the failure is silent -- you would discover it only when
+you tried to connect.
+
+**The account login cannot be scripted.** The daemon starts on boot, but
+associating the machine with your TeamViewer account needs your email, password,
+and usually a second factor, through the GUI. Until that happens the machine
+appears nowhere and nobody can connect. `teamviewer passwd <pw>` sets the
+unattended password from the CLI, but the account assignment itself has no
+supported command-line path. This is why it cannot be set up for you remotely,
+and why it belongs in the same keyboard session as the rebuild.
+
 ## What is verified here and what is not
 
 Verified against upstream sources: the `authKeyFile`, `extraSetFlags` and

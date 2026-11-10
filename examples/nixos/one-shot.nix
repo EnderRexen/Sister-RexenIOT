@@ -67,6 +67,35 @@ in
     extraUpFlags = [ "--ssh" ];
   };
 
+  # ------------------------------------------------------------------ TeamViewer
+  # Optional. Included because you are already at the keyboard for one rebuild,
+  # so it costs nothing extra -- but be clear about what it does and does not
+  # buy you.
+  #
+  # It gives you a *picture* of the screen: look, click, type. It does not give
+  # you a shell, so it cannot run `nixos-rebuild`, `journalctl`, or anything
+  # scriptable. For managing the machine, the SSH path above is the one that
+  # matters. TeamViewer is a fallback for when you need to see the desktop.
+  #
+  # X11 confirmed, so screen capture works. On Wayland this would silently
+  # fail to share the screen.
+  nixpkgs.config.allowUnfreePackages = [ "teamviewer" ];
+  services.teamviewer.enable = true;
+
+  # The daemon starts on boot, but the account login is interactive and cannot
+  # be scripted -- it needs your email, password, and usually a second factor.
+  # So it happens in the same keyboard session as this rebuild:
+  #
+  #   1. Launch TeamViewer from the app menu.
+  #   2. Sign in to your account.
+  #   3. Set a personal password for unattended access, and tick
+  #      "Grant easy access" / start-with-system.
+  #
+  # Until step 2, the machine shows up nowhere and nobody can connect.
+  # `teamviewer passwd <pw>` sets the unattended password from the CLI, but the
+  # account assignment itself is GUI-only. There is no supported way to do the
+  # login from a script, which is why this cannot be set up for you remotely.
+
   # ------------------------------------------------------------------ RexenIOT
   services.rexeniot = {
     enable = true;
