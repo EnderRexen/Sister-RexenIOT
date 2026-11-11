@@ -79,9 +79,11 @@ def build_system_prompt(personality: personalities.Personality, cfg: config.AppC
 
     enabled_tools = cfg.tools.enabled
     if enabled_tools:
-        usable = usable_tools(cfg)
-        names = ", ".join(t.name for t in usable)
-        extra_bits.append(f"{TOOL_PROTOCOL_NOTE}\nTools available to you: {names}.")
+        # The tool names are deliberately not repeated here. Every schema in the
+        # request already carries its own name, so listing them again paid for
+        # the same names twice on every turn, and a weaker local model would
+        # sometimes answer by naming a tool instead of calling it.
+        extra_bits.append(TOOL_PROTOCOL_NOTE)
         if cfg.tools.home_assistant_url and cfg.tools.resolved_ha_token():
             extra_bits.append("Home Assistant is configured; prefer it for lights, climate, scenes and locks.")
         if cfg.tools.mqtt_host:

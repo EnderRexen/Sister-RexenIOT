@@ -154,8 +154,8 @@ def _resolve_app(name: str) -> tuple[str, dict[str, str]]:
 
 @registry.add(
     "notify_user",
-    "Show a desktop notification on the user's screen. Use for reminders, a "
-    "finished timer, or anything the user should see even when the HUD is closed.",
+    "Show a desktop notification. Use when the user should see something even "
+    "with the HUD closed.",
     {
         "type": "object",
         "properties": {
@@ -188,8 +188,7 @@ async def notify_user(summary: str, body: str, urgency: str = "normal") -> Any:
 
 @registry.add(
     "open_app",
-    "Open an application on the user's desktop by name, for example 'firefox', "
-    "'kate' or 'dolphin'. Only installed applications can be opened.",
+    "Open an installed application on the user's desktop by name.",
     {
         "type": "object",
         "properties": {
@@ -212,7 +211,7 @@ async def open_app(name: str) -> Any:
 
 @registry.add(
     "list_apps",
-    "List the applications installed on the user's desktop that can be opened.",
+    "List installed applications that can be opened.",
     {
         "type": "object",
         "properties": {
@@ -232,8 +231,7 @@ async def list_apps(search: str = "") -> Any:
 
 @registry.add(
     "control_media",
-    "Control media playback in whichever player is active: play, pause, next or "
-    "previous track, or report what is playing.",
+    "Control or inspect media playback in the active player.",
     {
         "type": "object",
         "properties": {
@@ -271,8 +269,7 @@ async def control_media(action: str) -> Any:
 
 @registry.add(
     "set_power_profile",
-    "Set the machine's power profile to 'power-saver', 'balanced' or "
-    "'performance', or report the current one.",
+    "Set or report the machine's power profile.",
     {
         "type": "object",
         "properties": {

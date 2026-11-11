@@ -19,7 +19,9 @@ import json
 import logging
 import time
 import uuid
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 
@@ -27,6 +29,11 @@ from .. import config
 from .base import ToolError, registry
 
 log = logging.getLogger("rexeniot.tools.comfyui")
+
+#: Output keys ComfyUI nodes report generated files under. ``images`` is the
+#: core SaveImage node; the rest come from the audio, video and 3D nodes and
+#: packs (SaveAudio, VHS_VideoCombine, ...).
+_FILE_KEYS = ("images", "audio", "gifs", "video", "videos", "3d", "files")
 
 
 def _base_url() -> str:
@@ -123,29 +130,57 @@ async def _wait(base: str, prompt_id: str, timeout: float) -> dict[str, Any]:
     raise ToolError(f"ComfyUI did not finish within {int(timeout)} seconds.")
 
 
-def _collect_images(outputs: dict[str, Any]) -> list[dict[str, str]]:
-    images: list[dict[str, str]] = []
-    for node_id, node in outputs.items():
-        for img in node.get("images", []) or []:
-            images.append(
-                {
-                    "node": node_id,
-                    "filename": img.get("filename", ""),
-                    "subfolder": img.get("subfolder", ""),
-                    "type": img.get("type", "output"),
-                }
-            )
-    return images
+def _collect_outputs(outputs: dict[str, Any]) -> list[dict[str, str]]:
+    """Every generated file ComfyUI reported, whatever kind it is.
+
+    A workflow can end in SaveImage, SaveAudio, VHS_VideoCombine or a 3D export,
+    and each reports its result under a different key (``images``, ``audio``,
+    ``gifs``, ``video``, ``3d``). Reading only ``images`` meant a music or video
+    workflow finished successfully and then handed back an empty list, which
+    reads as "nothing was generated". The keys are collected generically so a
+    node pack that invents a new one still works.
+    """
+    found: list[dict[str, str]] = []
+    for node_id, node in (outputs or {}).items():
+        if not isinstance(node, dict):
+            continue
+        for key, value in node.items():
+            if key not in _FILE_KEYS or not isinstance(value, list):
+                continue
+            for item in value:
+                if not isinstance(item, dict):
+                    continue
+                filename = item.get("filename") or item.get("file") or ""
+                if not filename:
+                    continue
+                found.append(
+                    {
+                        "node": node_id,
+                        "kind": key,
+                        "filename": filename,
+                        "subfolder": item.get("subfolder", ""),
+                        "type": item.get("type", "output"),
+                    }
+                )
+    return found
 
 
 @registry.add(
-    "generate_image",
-    "Generate an image from a text description using ComfyUI. Returns the saved "
-    "filenames. Use for 'draw me', 'make a picture of' and similar requests.",
+    "generate_media",
+    "Generate an image, or audio, video or 3D output, through ComfyUI. Use for "
+    "'draw me', 'make a picture of', or a song when a music workflow is installed. "
+    "Images use a built-in graph; other kinds need a workflow file. Results are "
+    "shown in the chat.",
     {
         "type": "object",
         "properties": {
-            "prompt": {"type": "string", "description": "What the image should show."},
+            "prompt": {"type": "string", "description": "What to generate."},
+            "kind": {
+                "type": "string",
+                "enum": ["image", "audio", "video", "3d"],
+                "default": "image",
+                "description": "What to produce. 'audio' covers music and speech.",
+            },
             "negative_prompt": {"type": "string", "description": "What to avoid.", "default": "blurry, low quality, watermark, text"},
             "width": {"type": "integer", "default": 1024},
             "height": {"type": "integer", "default": 1024},
@@ -156,8 +191,9 @@ def _collect_images(outputs: dict[str, Any]) -> list[dict[str, str]]:
     requires="ComfyUI base URL",
     tags=["generation"],
 )
-async def generate_image(
+async def generate_media(
     prompt: str,
+    kind: str = "image",
     negative_prompt: str = "blurry, low quality, watermark, text",
     width: int = 1024,
     height: int = 1024,
@@ -165,18 +201,38 @@ async def generate_image(
 ) -> Any:
     base = _base_url()
     if not prompt.strip():
-        raise ToolError("A prompt is required to generate an image.")
+        raise ToolError("A prompt is required to generate something.")
 
     cfg = config.load()
-    # A workflow file lets the operator pin their own checkpoint and nodes.
-    workflow_path = config.DATA_DIR / "workflows" / f"{cfg.tools.comfyui_workflow}.json"
-    if workflow_path.exists():
+    # A workflow file lets the operator pin their own checkpoint and nodes. One
+    # named after the requested kind is preferred, so a music or video graph can
+    # be dropped in as data/workflows/audio.json without disturbing the default
+    # image workflow.
+    graph = None
+    for name in (kind, cfg.tools.comfyui_workflow):
+        path = config.DATA_DIR / "workflows" / f"{name}.json"
+        if not path.exists():
+            continue
         try:
-            graph = json.loads(workflow_path.read_text(encoding="utf-8"))
-            graph = _inject_prompt(graph, prompt, negative_prompt)
+            graph = _inject_prompt(
+                json.loads(path.read_text(encoding="utf-8")), prompt, negative_prompt, kind
+            )
+        except ToolError:
+            # Already a clear explanation of what the workflow is missing.
+            raise
         except Exception as exc:
-            raise ToolError(f"Could not read workflow '{cfg.tools.comfyui_workflow}': {exc}") from exc
-    else:
+            raise ToolError(f"Could not read workflow '{path.name}': {exc}") from exc
+        break
+
+    if graph is None:
+        if kind != "image":
+            # Saying so beats submitting an image graph and returning a picture
+            # of the request, or nothing at all.
+            raise ToolError(
+                f"Generating {kind} needs a ComfyUI workflow file. Save one as "
+                f"data/workflows/{kind}.json -- an ACE-Step or Stable Audio graph "
+                "for music -- and ask again."
+            )
         width = max(256, min(int(width), 2048))
         height = max(256, min(int(height), 2048))
         steps = max(4, min(int(steps), 80))
@@ -184,26 +240,39 @@ async def generate_image(
 
     prompt_id = await _submit(base, graph)
     outputs = await _wait(base, prompt_id, timeout=cfg.tools.request_timeout_s * 15)
-    images = _collect_images(outputs)
-    shared = _share_from_comfyui(base, images)
+    files = _collect_outputs(outputs)
+    shared = _share_from_comfyui(base, files)
+    first = files[0] if files else None
     return {
         "ok": True,
         "prompt_id": prompt_id,
-        "images": images,
+        "kind": kind,
+        "files": files,
         "shared": shared,
         "view_url": (
-            f"{base}/view?filename={images[0]['filename']}&subfolder={images[0]['subfolder']}"
-            f"&type={images[0]['type']}" if images else None
+            f"{base}/view?"
+            + urlencode(
+                {
+                    "filename": first["filename"],
+                    "subfolder": first["subfolder"],
+                    "type": first["type"],
+                }
+            )
+            if first
+            else None
         ),
         "note": (
-            "The image is displayed in the chat." if shared
-            else "Images are stored by ComfyUI; open the view_url to see them."
+            f"The {kind} is displayed in the chat."
+            if shared
+            else f"Nothing was returned; the {kind} workflow has no output node."
+            if not files
+            else f"The {kind} is stored by ComfyUI; open the view_url to see it."
         ),
     }
 
 
-def _share_from_comfyui(base: str, images: list[dict[str, str]]) -> list[str]:
-    """Pull generated images off ComfyUI and register them for the chat.
+def _share_from_comfyui(base: str, files: list[dict[str, str]]) -> list[str]:
+    """Pull generated files off ComfyUI and register them for the chat.
 
     ComfyUI only hands back filenames, so the bytes are fetched from its /view
     endpoint and registered as artifacts. A failure here must not fail the
@@ -212,20 +281,28 @@ def _share_from_comfyui(base: str, images: list[dict[str, str]]) -> list[str]:
     from .. import uploads as uploads_mod
 
     shared: list[str] = []
-    for img in images[:4]:
-        url = f"{base}/view?filename={img['filename']}&subfolder={img.get('subfolder', '')}&type={img.get('type', 'output')}"
+    for item in files[:4]:
+        # Filenames can contain spaces or '&', which would truncate the query.
+        query = urlencode(
+            {
+                "filename": item["filename"],
+                "subfolder": item.get("subfolder", ""),
+                "type": item.get("type", "output"),
+            }
+        )
+        url = f"{base}/view?{query}"
         try:
             with httpx.Client(timeout=30.0) as client:
                 resp = client.get(url)
                 resp.raise_for_status()
-            staged = config.DATA_DIR / "cache" / f"comfyui-{uuid.uuid4().hex[:8]}-{img['filename']}"
+            staged = config.DATA_DIR / "cache" / f"comfyui-{uuid.uuid4().hex[:8]}-{Path(item['filename']).name}"
             staged.parent.mkdir(parents=True, exist_ok=True)
             staged.write_bytes(resp.content)
-            item = uploads_mod.register_artifact(staged, name=img["filename"])
-            shared.append(item.id)
+            registered = uploads_mod.register_artifact(staged, name=Path(item["filename"]).name)
+            shared.append(registered.id)
             staged.unlink(missing_ok=True)
         except Exception as exc:  # noqa: BLE001 - generation already succeeded
-            log.warning("could not share generated image %s: %s", img.get("filename"), exc)
+            log.warning("could not share generated file %s: %s", item.get("filename"), exc)
     return shared
 
 
@@ -266,11 +343,24 @@ def _wired_text_nodes(graph: dict[str, Any]) -> tuple[str | None, str | None]:
     return positive, negative
 
 
-def _inject_prompt(graph: dict[str, Any], prompt: str, negative: str) -> dict[str, Any]:
-    """Replace the positive and negative text nodes in a user workflow."""
+def _inject_prompt(
+    graph: dict[str, Any], prompt: str, negative: str, kind: str = "image"
+) -> dict[str, Any]:
+    """Replace the positive and negative text nodes in a user workflow.
+
+    A workflow with no text node at all can only be the built-in graph's job: the
+    fallback builds an image graph, so it is only safe for ``kind == "image"``.
+    Substituting it for a music workflow would submit an image graph and hand
+    back a picture of the song request, so for anything else the caller's own
+    missing-workflow error is the honest answer.
+    """
     nodes = _text_nodes(graph)
     if not nodes:
-        # No text node at all: fall back to the built-in graph.
+        if kind != "image":
+            raise ToolError(
+                f"The {kind} workflow has no text node to put the prompt in. Add a "
+                "CLIPTextEncode (or equivalent) node, or generate with kind='image'."
+            )
         return _default_workflow(prompt, negative, 1024, 1024, 25)
 
     positive_id, negative_id = _wired_text_nodes(graph)

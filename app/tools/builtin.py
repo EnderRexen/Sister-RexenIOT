@@ -195,8 +195,7 @@ async def mqtt_publish(topic: str, payload: str, retain: bool = False) -> Any:
 
 @registry.add(
     "system_status",
-    "Report the status of the computer running Sister RexenIOT: CPU load, memory, disk, "
-    "battery, uptime and the operating system.",
+    "Report CPU load, memory, disk, battery, uptime and OS.",
     {"type": "object", "properties": {}},
     tags=["system"],
 )
@@ -328,7 +327,7 @@ def _check_allowlist(url: str) -> None:
 
 @registry.add(
     "fetch_url",
-    "Fetch a URL and return its text content, for reading a page or calling a JSON API. "
+    "Fetch a URL and return its text, for reading a page or calling a JSON API. "
     "Only allowlisted domains are reachable.",
     {
         "type": "object",
@@ -449,8 +448,8 @@ def _persist_memory() -> None:
 
 @registry.add(
     "remember",
-    "Store a durable fact about the user or the home, so it can be recalled in later "
-    "conversations. Use for preferences, names and standing instructions.",
+    "Store a durable fact about the user or the home, for recall in later "
+    "conversations.",
     {
         "type": "object",
         "properties": {
@@ -495,10 +494,9 @@ async def recall(query: str) -> Any:
 
 @registry.add(
     "share_file",
-    "Show a file in the chat so the user can preview or play it. Use this after "
-    "creating or generating a file (an image, a recording, a report), so the user "
-    "sees the result rather than just a filename. Images are displayed inline, "
-    "audio and video get a player, and anything else is offered as a download.",
+    "Show a file in the chat for preview or playback. Use after creating a file "
+    "so the user sees the result rather than a filename. Images render inline, "
+    "audio and video get a player, anything else a download.",
     {
         "type": "object",
         "properties": {

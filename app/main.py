@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, config, hardware, model_catalog, personalities
+from . import __version__, comfyui_provision, config, hardware, model_catalog, personalities
 from .llm import adopt_first_local, adopt_first_local_in_background
 from .routers import admin, chat, status
 from .security import assert_binding_is_safe
@@ -137,6 +137,49 @@ async def lifespan(app: FastAPI):
                 log.warning("STT warm-up failed: %s", exc)
 
         asyncio.create_task(warm_stt())
+
+    if cfg.tools.resolved_comfyui_url():
+        # ComfyUI needs its node packs and model files before a workflow that
+        # names them can run, so this is where that happens. Verification is
+        # cheap and always runs; the install only runs when the operator has
+        # named something, because it fetches gigabytes. Backgrounded so a slow
+        # download never delays the first chat.
+        async def provision_comfyui() -> None:
+            try:
+                report = await comfyui_provision.verify_and_provision()
+            except Exception as exc:  # noqa: BLE001 - never fatal at boot
+                log.warning("ComfyUI provisioning failed: %s", exc)
+                return
+            verify = report.get("verify") or {}
+            if not verify.get("reachable"):
+                log.info("ComfyUI is configured but not answering; skipping node check")
+                return
+            if not verify.get("manager"):
+                log.info(
+                    "ComfyUI-Manager is not installed; nodes must be added by hand"
+                )
+            for name, detail in (verify.get("workflows") or {}).items():
+                if detail.get("ready"):
+                    log.info("workflow '%s' is ready (%d nodes)", name, detail["classes"])
+                else:
+                    log.warning(
+                        "workflow '%s' needs node packs that are not installed: %s",
+                        name,
+                        ", ".join(detail.get("missing") or []),
+                    )
+            result = report.get("provision") or {}
+            for entry in result.get("installed") or []:
+                log.info("ComfyUI %s '%s': %s", entry["kind"], entry["id"], entry["detail"])
+            for entry in result.get("failed") or []:
+                log.warning(
+                    "ComfyUI %s '%s' failed: %s", entry["kind"], entry["id"], entry["detail"]
+                )
+            if result.get("detail"):
+                log.info("ComfyUI provisioning: %s", result["detail"])
+            if result.get("installed"):
+                log.info("Restart ComfyUI so the newly installed nodes are loaded")
+
+        asyncio.create_task(provision_comfyui())
 
     yield
     log.info("Sister RexenIOT shutting down")

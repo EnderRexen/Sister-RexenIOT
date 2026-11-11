@@ -639,3 +639,26 @@ identifiers, env vars, log names or filenames. The conventions are
   wiped between turns. No `ssh` binary and no root; use
   `/workspace/.access/rexen.py` (paramiko over the SOCKS5 proxy, reads stdin).
   tailscaled needs `--socks5-server=127.0.0.1:1055`, which `ts-up.sh` omits.
+
+ComfyUI (2026-11-11): a workflow JSON is **not** an install. Its node classes
+exist only once the providing pack is loaded, and it loads checkpoints by
+filename. `app/comfyui_provision.py` verifies at boot by diffing
+`/object_info` (what the server really offers) against `required_classes()` of
+every workflow plus the built-in image graph -- a `custom_nodes/` directory
+existing is *not* proof the pack loaded. Provisioning (`comfyui_nodes` /
+`comfyui_models`) is opt-in and empty by default (fetches GBs). Bugs fixed and
+the traps hit: `2026-11-11.md`.
+
+`generate_image` is now `generate_media(prompt, kind=image|audio|video|3d)`.
+Skill records persist in `data/skills.json`, so **renaming a tool needs a
+migration** (`_RENAMED_TOOLS` in `app/skills.py`) or operators silently lose
+the capability. Fixed per-turn token cost is ~1667 tok (was ~1841); measure with
+the rendered system prompt plus `json.dumps([t.schema() for t in usable_tools(cfg)])`.
+
+Sandbox: `REXENIOT_HOME` relocates the **whole app root**, so config lives at
+`$HOME/data/config.json`. `config.ROOT`/`DATA_DIR`/`CONFIG_PATH` resolve at
+*import* time -- set the env var before the first `app` import; reassigning
+`config.DATA_DIR` later does nothing. A test writing `comfyui_url` into a shared
+home breaks `test_reasoning_and_gating` (cross-test pollution, not a
+regression). Run each test with its own `REXENIOT_HOME`; a shared one hangs the
+server tests.

@@ -207,6 +207,19 @@ class ToolConfig(BaseModel):
     #: ComfyUI handles image and 3D generation tasks the chat model cannot do.
     comfyui_url: str = ""
     comfyui_workflow: str = "rexeniot_default"
+    #: Absolute path to ComfyUI's own directory (the one holding ``custom_nodes``
+    #: and ``models``), on the machine ComfyUI runs on. Only needed when that is
+    #: not the machine RexenIOT runs on, where ComfyUI's root is found from its
+    #: running process. Left empty, provisioning is skipped and the app only
+    #: reports what is missing.
+    comfyui_root: str = ""
+    #: ComfyUI node packs and model files to provision at startup, so a workflow
+    #: the operator installs later has the nodes and weights it needs. Node packs
+    #: are cloned into custom_nodes and their requirements installed; models are
+    #: fetched from Hugging Face into the matching models subdirectory. Empty by
+    #: default: this fetches several GB and must be asked for, not assumed.
+    comfyui_nodes: list[str] = Field(default_factory=list)
+    comfyui_models: list[str] = Field(default_factory=list)
 
     #: Alexa. Amazon publishes no API for commanding an Echo or making it speak,
     #: so ``provider`` picks whichever supported route the operator can use:

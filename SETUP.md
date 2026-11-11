@@ -454,7 +454,7 @@ you keep keys out of the file entirely.
 
 Home: `home_assistant_states`, `home_assistant_call_service`, `mqtt_publish`.
 Alexa: `alexa_speak`, `alexa_command`, `alexa_ask`, `alexa_routine`,
-`alexa_devices`. Media: `generate_image`, `comfyui_status`. Computer:
+`alexa_devices`. Media: `generate_media`, `comfyui_status`. Computer:
 `system_status`, `list_processes`, `run_shell_command` (off by default).
 Web: `fetch_url`. Memory and time: `remember`, `recall`, `set_timer`.
 

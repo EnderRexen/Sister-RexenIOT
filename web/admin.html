@@ -332,6 +332,15 @@
         <label>ComfyUI default workflow
           <input name="tools.comfyui_workflow" data-cfg="tools.comfyui_workflow" placeholder="rexeniot_default" />
         </label>
+        <label class="span-2">ComfyUI directory <span class="muted">(the folder holding custom_nodes and models; found automatically when ComfyUI runs on this machine)</span>
+          <input name="tools.comfyui_root" data-cfg="tools.comfyui_root" placeholder="/home/you/ComfyUI" />
+        </label>
+        <label class="span-2">Node packs to install at startup <span class="muted">(comma separated names or git URLs, e.g. manager, ace-step)</span>
+          <input name="tools.comfyui_nodes" data-cfg="tools.comfyui_nodes-list" placeholder="manager, ace-step" />
+        </label>
+        <label class="span-2">Model files to install at startup <span class="muted">(comma separated, e.g. ace-step; each is several GB)</span>
+          <input name="tools.comfyui_models" data-cfg="tools.comfyui_models-list" placeholder="ace-step" />
+        </label>
       </div>
     </div>
   </section>

@@ -114,7 +114,7 @@ withheld = skills.withheld_tool_names()
 offered = {t.name for t in registry.available()} - withheld
 check("home_assistant_call_service" in withheld,
       "Home Assistant is withheld with no URL configured")
-check("generate_image" in withheld, "ComfyUI is withheld with no URL configured")
+check("generate_media" in withheld, "ComfyUI is withheld with no URL configured")
 check("alexa_speak" in withheld, "Alexa is withheld with no provider configured")
 check("set_timer" in offered, "a built-in tool with no provider stays offered")
 check("notify_user" in offered, "a desktop tool with no provider stays offered")

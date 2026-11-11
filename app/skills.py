@@ -129,13 +129,13 @@ BUILTIN: list[dict[str, Any]] = [
     {
         "id": "images",
         "name": "Images",
-        "tagline": "Generate images with ComfyUI",
-        "description": "Hand image and 3D generation to ComfyUI, which the chat model cannot do.",
+        "tagline": "Generate images, audio and video with ComfyUI",
+        "description": "Hand image, audio, video and 3D generation to ComfyUI, which the chat model cannot do.",
         "instructions": (
-            "Skill: Images. Delegate image and 3D generation to ComfyUI rather than describing "
-            "what an image would look like."
+            "Skill: Images. Delegate image, audio, video and 3D generation to ComfyUI rather "
+            "than describing what the result would look like."
         ),
-        "tools": ["generate_image", "comfyui_status"],
+        "tools": ["generate_media", "comfyui_status"],
         "requires": "ComfyUI URL",
         "config_fields": ["comfyui_url"],
     },
@@ -199,6 +199,22 @@ def _builtins() -> list[Skill]:
     return [Skill(**entry, builtin=True) for entry in BUILTIN]
 
 
+#: Renamed tools: skill records are persisted, so an operator's saved copy would
+#: keep naming the old tool and quietly lose the capability after an upgrade.
+_RENAMED_TOOLS = {"generate_image": "generate_media"}
+
+
+def _migrate_tool_names(items: list[Skill]) -> bool:
+    """Rewrite renamed tool ids in a persisted store. True if anything changed."""
+    changed = False
+    for skill in items:
+        renamed = [_RENAMED_TOOLS.get(t, t) for t in skill.tools]
+        if renamed != skill.tools:
+            skill.tools = renamed
+            changed = True
+    return changed
+
+
 def load(force: bool = False) -> list[Skill]:
     with _lock:
         if config.SKILLS_PATH.exists() and not force:
@@ -206,6 +222,8 @@ def load(force: bool = False) -> list[Skill]:
                 raw = json.loads(config.SKILLS_PATH.read_text(encoding="utf-8"))
                 items = [Skill.model_validate(x) for x in raw]
                 if items:
+                    if _migrate_tool_names(items):
+                        _write(items)
                     return items
             except Exception:
                 pass

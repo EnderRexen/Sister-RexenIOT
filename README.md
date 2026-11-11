@@ -317,7 +317,7 @@ independently — a missing one disables only its own tools.
 | `home_assistant_states` | List entities and states | HA URL + token |
 | `home_assistant_call_service` | Lights, climate, scenes, locks | HA URL + token |
 | `mqtt_publish` | Publish to an MQTT topic | Broker host |
-| `generate_image` | Text-to-image via ComfyUI | ComfyUI URL |
+| `generate_media` | Image, audio, video or 3D via ComfyUI | ComfyUI URL (+ workflow file for non-image) |
 | `comfyui_status` | Check ComfyUI reachability | — |
 | `system_status` | CPU, memory, disk, battery, GPU | — |
 | `list_processes` | Top processes by CPU or memory | — |
@@ -367,7 +367,7 @@ are offered as downloads.
 
 In the other direction, `share_file` puts a host file into the chat. Anything
 that can be previewed in a browser shows up as a player or an image, with a
-download link alongside. ComfyUI's `generate_image` shares its output
+download link alongside. ComfyUI's `generate_media` shares its output
 automatically, so a generated picture appears in the conversation without being
 asked for.
 
@@ -427,13 +427,44 @@ Different jobs suit different backends, so RexenIOT routes by intent:
 
 - **Conversation, reasoning, tool calls** → your chat endpoint (Ollama, LM
   Studio, llama.cpp, vLLM, hosted)
-- **Image and 3D generation** → ComfyUI
+- **Image, audio, video and 3D generation** → ComfyUI
 - **Speech** → KittenTTS
 - **Echo devices** → the configured Alexa bridge
 
 The router is keyword-based, so it works with no model loaded. Ask
 `POST /api/route` to see where a given message would go. The admin panel shows
 each backend's readiness.
+
+### Giving ComfyUI the nodes and models it needs
+
+A workflow file alone does not make a generator work. The graph names node
+classes (`SaveAudio`, `ACEStepSampler`, …) that exist only once the node pack
+providing them is installed, and it loads checkpoints by filename that have to
+be on disk. Dropping a music workflow in without either used to produce a
+ComfyUI error you had to go and read in ComfyUI's own log.
+
+At startup, when a ComfyUI URL is configured, the app checks every workflow in
+`data/workflows/` against the running server's `/object_info` and logs the
+result:
+
+```
+INFO    workflow 'builtin:image' is ready (6 nodes)
+WARNING workflow 'audio' needs node packs that are not installed: ACEStepSampler, SaveAudio
+```
+
+That check is read-only and always runs, so a gap is visible before you ask for
+a song rather than after. Installing the gap is opt-in, because it fetches
+gigabytes:
+
+| Setting | Meaning |
+|---|---|
+| `tools.comfyui_root` | ComfyUI's own folder (the one holding `custom_nodes` and `models`). Found automatically from ComfyUI's process when it runs on this machine. |
+| `tools.comfyui_nodes` | Node packs to clone into `custom_nodes/`, by short name (`manager`, `ace-step`) or git URL. |
+| `tools.comfyui_models` | Model files to download into `models/`, by short name (`ace-step`) or `repo/filename=subdir`. |
+
+Each is a comma-separated list, and all three are empty by default. New node
+packs are read by ComfyUI at its own startup, so restart ComfyUI after one is
+installed — the log says so when that applies.
 
 ## Layout
 
