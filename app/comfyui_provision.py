@@ -41,14 +41,15 @@ log = logging.getLogger("rexeniot.comfyui")
 
 #: Model files worth knowing by a short name, so the config stays readable.
 #: Each entry is (huggingface repo, filename, ComfyUI models/ subdirectory).
+#: A filename of "" means the entry is a *directory* of weights, fetched whole
+#: into that subdirectory -- which is how ACE-Step ships.
 KNOWN_MODELS: dict[str, tuple[str, str, str]] = {
-    # ACE-Step is the music model with the widest ComfyUI node support. Its
-    # pipeline file is loaded as a checkpoint by the ACE-Step nodes.
-    "ace-step": (
-        "ACE-Step/ACE-Step-v1-3.5B",
-        "ace_step_v1_3.5b.safetensors",
-        "checkpoints",
-    ),
+    # ACE-Step is the music model with the widest ComfyUI node support, and it
+    # is the one that runs fully offline. The repo is a directory tree of four
+    # component folders (the DCAE, the vocoder, the transformer and the text
+    # encoder), not a single checkpoint: the node pack loads each folder
+    # separately, so downloading one .safetensors file would leave it broken.
+    "ace-step": ("ACE-Step/ACE-Step-v1-3.5B", "", "TTS/ACE-Step-v1-3.5B"),
     "stable-audio-open": (
         "stabilityai/stable-audio-open-1.0",
         "model.safetensors",
@@ -57,9 +58,25 @@ KNOWN_MODELS: dict[str, tuple[str, str, str]] = {
 }
 
 #: Node packs by short name, as git URLs.
+#: ``ace-step`` is billwuhao's pack, which runs the model locally. The similarly
+#: named ``ace-step/ACE-Step-ComfyUI`` is NOT interchangeable: it is an API
+#: proxy that posts to a hosted service, so it generates nothing offline.
 KNOWN_NODES: dict[str, str] = {
     "manager": "https://github.com/ltdrdata/ComfyUI-Manager",
-    "ace-step": "https://github.com/ace-step/ComfyUI-ACE-Step",
+    "ace-step": "https://github.com/billwuhao/ComfyUI_ACE-Step",
+}
+
+#: Component folders a directory-shaped model repo must contain, by repo id.
+#: Used by the offline "is it already downloaded?" check. Kept as a table
+#: rather than a live Hugging Face listing so a startup check never needs the
+#: network, and so a half-finished download is caught instead of assumed good.
+DIR_MODEL_COMPONENTS: dict[str, tuple[str, ...]] = {
+    "ACE-Step/ACE-Step-v1-3.5B": (
+        "music_dcae_f8c8",
+        "music_vocoder",
+        "ace_step_transformer",
+        "umt5-base",
+    ),
 }
 
 
@@ -150,9 +167,30 @@ def missing(cfg: Any | None = None) -> dict[str, Any]:
         except ValueError:
             report["models_missing"].append(spec)
             continue
-        if not (root / "models" / subdir / filename).is_file():
+        if filename:
+            if not (root / "models" / subdir / filename).is_file():
+                report["models_missing"].append(spec)
+        elif not _dir_model_present(root, repo, subdir):
             report["models_missing"].append(spec)
     return report
+
+
+def _dir_model_present(root: Path, repo: str, subdir: str) -> bool:
+    """Whether a directory-shaped model repo has been fetched already.
+
+    Deliberately offline: this runs at startup and in the admin panel, so it
+    must not depend on the network. For a model whose layout is known, every
+    component folder has to be present and non-empty, which is what catches the
+    usual failure -- a multi-gigabyte download that stopped half way. An unknown
+    repo can only be checked for "something is there".
+    """
+    base = root / "models" / subdir
+    if not base.is_dir():
+        return False
+    components = DIR_MODEL_COMPONENTS.get(repo)
+    if not components:
+        return any(base.iterdir())
+    return all((base / name).is_dir() and any((base / name).iterdir()) for name in components)
 
 
 def _node_name(spec: str) -> str:
@@ -168,7 +206,7 @@ def _parse_model_spec(spec: str) -> tuple[str, str, str]:
 
     Accepts a short name from :data:`KNOWN_MODELS`, or an explicit
     ``repo/filename=subdir`` so an operator can add anything else without a
-    code change.
+    code change. An empty filename means the whole repo is a directory tree.
     """
     if spec in KNOWN_MODELS:
         return KNOWN_MODELS[spec]
@@ -228,18 +266,35 @@ def _install_node(spec: str, root: Path) -> str:
 
 
 def _install_model(spec: str, root: Path) -> str:
-    """Download one model file into ComfyUI's models tree."""
+    """Download one model into ComfyUI's models tree.
+
+    A spec with a filename fetches that one file. A spec without one fetches the
+    whole repo, for models like ACE-Step that ship as a tree of component
+    folders rather than a single checkpoint.
+    """
     repo, filename, subdir = _parse_model_spec(spec)
     dest = root / "models" / subdir
     dest.mkdir(parents=True, exist_ok=True)
-    if (dest / filename).is_file():
+
+    if filename:
+        if (dest / filename).is_file():
+            return "already present"
+        from huggingface_hub import hf_hub_download
+
+        hf_hub_download(
+            repo_id=repo,
+            filename=filename,
+            local_dir=str(dest),
+            cache_dir=str(config.MODELS_DIR),
+        )
+        return "downloaded"
+
+    if _dir_model_present(root, repo, subdir):
         return "already present"
+    from huggingface_hub import snapshot_download
 
-    from huggingface_hub import hf_hub_download
-
-    hf_hub_download(
+    snapshot_download(
         repo_id=repo,
-        filename=filename,
         local_dir=str(dest),
         cache_dir=str(config.MODELS_DIR),
     )
@@ -375,19 +430,26 @@ async def _object_info() -> dict[str, Any] | None:
         return None
 
 
-def _builtin_image_classes() -> set[str]:
-    """Classes the built-in text-to-image graph needs.
+def _builtin_classes() -> dict[str, set[str]]:
+    """Classes each built-in graph needs, keyed by a label for the report.
 
-    Checked as well as the workflow files, because image generation is the one
-    path that works with no workflow installed at all -- if its core nodes are
-    absent, ComfyUI is not usable for anything and the operator should hear so.
+    Checked as well as the workflow files, because these two paths work with no
+    workflow installed at all. Image is the baseline -- if its core nodes are
+    absent, ComfyUI is not usable for anything. Music needs the ACE-Step pack,
+    which is a separate install, so it is reported separately rather than
+    counted against ComfyUI as a whole.
     """
+    out: dict[str, set[str]] = {}
     try:
-        from .tools.comfyui import _default_workflow
+        from .tools.comfyui import _default_workflow, _music_workflow
 
-        return required_classes(_default_workflow("x", "y", 512, 512, 4))
+        out["builtin:image"] = required_classes(_default_workflow("x", "y", 512, 512, 4))
+        out["builtin:music"] = required_classes(
+            _music_workflow("x", "y", "", 60.0, 20)
+        )
     except Exception:  # noqa: BLE001 - only a diagnostic aid
-        return set()
+        return out
+    return out
 
 
 async def verify() -> dict[str, Any]:
@@ -432,11 +494,12 @@ async def verify() -> dict[str, Any]:
         }
         missing.update(absent)
 
-    builtin = _builtin_image_classes()
-    if builtin:
-        absent = sorted(builtin - available)
-        report["workflows"]["builtin:image"] = {
-            "classes": len(builtin),
+    for label, needed in _builtin_classes().items():
+        if not needed:
+            continue
+        absent = sorted(needed - available)
+        report["workflows"][label] = {
+            "classes": len(needed),
             "missing": absent,
             "ready": not absent,
         }

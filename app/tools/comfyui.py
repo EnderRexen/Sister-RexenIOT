@@ -35,6 +35,23 @@ log = logging.getLogger("rexeniot.tools.comfyui")
 #: packs (SaveAudio, VHS_VideoCombine, ...).
 _FILE_KEYS = ("images", "audio", "gifs", "video", "videos", "3d", "files")
 
+#: Node classes that carry a text prompt, and the input field holding the text.
+#: The ACE-Step nodes name their field ``multi_line_prompt`` rather than
+#: ``text``, so a music workflow has no CLIPTextEncode to inject into.
+_TEXT_INPUT_FIELDS = {
+    "CLIPTextEncode": "text",
+    "MultiLinePromptACES": "multi_line_prompt",
+    "MultiLineLyrics": "multi_line_prompt",
+}
+
+#: ACE-Step model directories, relative to ComfyUI's models dir. The node pack
+#: loads each as a directory of weights, not a single file.
+ACE_STEP_MODEL_DIR = "TTS/ACE-Step-v1-3.5B"
+ACE_STEP_SUBDIRS = ("music_dcae_f8c8", "music_vocoder", "ace_step_transformer", "umt5-base")
+
+#: ACE-Step's marker for a track with no vocals.
+_INSTRUMENTAL_LYRICS = "[inst]"
+
 
 def _base_url() -> str:
     url = config.load().tools.resolved_comfyui_url()
@@ -91,6 +108,90 @@ def _default_workflow(prompt: str, negative: str, width: int, height: int, steps
         "9": {
             "class_type": "SaveImage",
             "inputs": {"filename_prefix": "rexeniot", "images": ["8", 0]},
+        },
+    }
+
+
+def _music_workflow(
+    prompt: str,
+    negative: str,
+    lyrics: str,
+    duration: float,
+    steps: int,
+) -> dict[str, Any]:
+    """A minimal ACE-Step text-to-music graph.
+
+    Mirrors the ACE-Step ComfyUI pack's own text2music example, minus the nodes
+    that only exist to help a human edit the prompt in the UI. The pack's nodes
+    are the ones that actually run the model locally; the similarly named
+    official ACE-Step pack is an API proxy for a hosted service, so a graph
+    built for it would not work here.
+
+    ``duration`` is seconds of audio. ACE-Step conditions the length up front,
+    so it is a real generation parameter rather than a trim.
+    """
+    seed = int(time.time() * 1000) % (2**31)
+    params = {
+        "audio_duration": float(duration),
+        "infer_step": int(steps),
+        "guidance_scale": 15.0,
+        "scheduler_type": "euler",
+        "cfg_type": "apg",
+        "omega_scale": 10.0,
+        "seed": seed,
+        "guidance_interval": 0.5,
+        "guidance_interval_decay": 0.0,
+        "min_guidance_scale": 3,
+        "use_erg_tag": True,
+        "use_erg_lyric": True,
+        "use_erg_diffusion": True,
+        "oss_steps": "",
+        "guidance_scale_text": 0.0,
+        "guidance_scale_lyric": 0.0,
+    }
+    return {
+        "1": {
+            "class_type": "ACEModelLoader",
+            "inputs": {
+                "dcae_checkpoint": "music_dcae_f8c8",
+                "vocoder_checkpoint": "music_vocoder",
+                "ace_step_checkpoint": "ace_step_transformer",
+                "text_encoder_checkpoint": "umt5-base",
+                "cpu_offload": False,
+                "torch_compile": False,
+            },
+        },
+        "2": {
+            "class_type": "MultiLinePromptACES",
+            "inputs": {"multi_line_prompt": prompt},
+        },
+        "3": {
+            "class_type": "MultiLineLyrics",
+            "inputs": {"multi_line_prompt": lyrics or _INSTRUMENTAL_LYRICS},
+        },
+        "4": {
+            "class_type": "GenerationParameters",
+            "inputs": params,
+        },
+        "5": {
+            "class_type": "ACEStepGen",
+            "inputs": {
+                "models": ["1", 0],
+                "prompt": ["2", 0],
+                "lyrics": ["3", 0],
+                "parameters": ["4", 0],
+                "negative_prompt": negative,
+                "overlapped_decode": False,
+                "delicious_song": "None",
+            },
+        },
+        "6": {
+            "class_type": "SaveAudioMP3",
+            "inputs": {
+                "audio": ["5", 0],
+                "filename_prefix": "rexeniot/song",
+                "quality": "V0",
+            },
         },
     }
 
@@ -182,6 +283,19 @@ def _collect_outputs(outputs: dict[str, Any]) -> list[dict[str, str]]:
                 "description": "What to produce. 'audio' covers music and speech.",
             },
             "negative_prompt": {"type": "string", "description": "What to avoid.", "default": "blurry, low quality, watermark, text"},
+            "lyrics": {
+                "type": "string",
+                "description": (
+                    "Words to sing, for kind='audio'. Use [verse] and [chorus] "
+                    "line markers. Leave empty for an instrumental track."
+                ),
+                "default": "",
+            },
+            "duration": {
+                "type": "number",
+                "description": "Seconds of audio to generate, for kind='audio'. A typical song is 120-180.",
+                "default": 120,
+            },
             "width": {"type": "integer", "default": 1024},
             "height": {"type": "integer", "default": 1024},
             "steps": {"type": "integer", "default": 25},
@@ -195,6 +309,8 @@ async def generate_media(
     prompt: str,
     kind: str = "image",
     negative_prompt: str = "blurry, low quality, watermark, text",
+    lyrics: str = "",
+    duration: float = 120.0,
     width: int = 1024,
     height: int = 1024,
     steps: int = 25,
@@ -215,7 +331,11 @@ async def generate_media(
             continue
         try:
             graph = _inject_prompt(
-                json.loads(path.read_text(encoding="utf-8")), prompt, negative_prompt, kind
+                json.loads(path.read_text(encoding="utf-8")),
+                prompt,
+                negative_prompt,
+                kind,
+                lyrics,
             )
         except ToolError:
             # Already a clear explanation of what the workflow is missing.
@@ -224,22 +344,31 @@ async def generate_media(
             raise ToolError(f"Could not read workflow '{path.name}': {exc}") from exc
         break
 
+    if graph is None and kind == "audio":
+        # Music needs no workflow file: the ACE-Step graph is built in, so a
+        # request works as soon as the node pack and weights are present.
+        duration = max(10.0, min(float(duration), 240.0))
+        steps = max(10, min(int(steps), 100))
+        graph = _music_workflow(prompt, negative_prompt, lyrics, duration, steps)
+
     if graph is None:
         if kind != "image":
             # Saying so beats submitting an image graph and returning a picture
             # of the request, or nothing at all.
             raise ToolError(
                 f"Generating {kind} needs a ComfyUI workflow file. Save one as "
-                f"data/workflows/{kind}.json -- an ACE-Step or Stable Audio graph "
-                "for music -- and ask again."
+                f"data/workflows/{kind}.json -- a video or 3D graph -- and ask again."
             )
         width = max(256, min(int(width), 2048))
         height = max(256, min(int(height), 2048))
         steps = max(4, min(int(steps), 80))
         graph = _default_workflow(prompt, negative_prompt, width, height, steps)
 
+    # Music runs the diffusion loop over minutes of audio, so it needs far
+    # longer than an image: scale the wait by the length requested.
+    timeout = cfg.tools.request_timeout_s * (15 if kind != "audio" else 120)
     prompt_id = await _submit(base, graph)
-    outputs = await _wait(base, prompt_id, timeout=cfg.tools.request_timeout_s * 15)
+    outputs = await _wait(base, prompt_id, timeout=timeout)
     files = _collect_outputs(outputs)
     shared = _share_from_comfyui(base, files)
     first = files[0] if files else None
@@ -307,12 +436,23 @@ def _share_from_comfyui(base: str, files: list[dict[str, str]]) -> list[str]:
 
 
 def _text_nodes(graph: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Map node id -> node for every CLIPTextEncode node in the graph."""
+    """Map node id -> node for every node that carries prompt text.
+
+    Not just ``CLIPTextEncode``: ACE-Step's prompt and lyrics nodes use the
+    class names in :data:`_TEXT_INPUT_FIELDS` and a ``multi_line_prompt`` field,
+    so an image-only view of the graph finds no text to replace in a music
+    workflow.
+    """
     return {
         node_id: node
         for node_id, node in graph.items()
-        if isinstance(node, dict) and node.get("class_type") == "CLIPTextEncode"
+        if isinstance(node, dict) and node.get("class_type") in _TEXT_INPUT_FIELDS
     }
+
+
+def _text_field(node: dict[str, Any]) -> str:
+    """The input key holding a node's text, for its class."""
+    return _TEXT_INPUT_FIELDS.get(node.get("class_type", ""), "text")
 
 
 def _wired_text_nodes(graph: dict[str, Any]) -> tuple[str | None, str | None]:
@@ -325,6 +465,7 @@ def _wired_text_nodes(graph: dict[str, Any]) -> tuple[str | None, str | None]:
     ordering alone cannot distinguish them.
     """
     positive = negative = None
+    text_ids = _text_nodes(graph)
     for node in graph.values():
         if not isinstance(node, dict) or node.get("class_type") != "KSampler":
             continue
@@ -334,7 +475,7 @@ def _wired_text_nodes(graph: dict[str, Any]) -> tuple[str | None, str | None]:
             if not isinstance(link, (list, tuple)) or not link:
                 continue
             node_id = str(link[0])
-            if node_id not in _text_nodes(graph):
+            if node_id not in text_ids:
                 continue
             if target == "positive" and positive is None:
                 positive = node_id
@@ -343,10 +484,31 @@ def _wired_text_nodes(graph: dict[str, Any]) -> tuple[str | None, str | None]:
     return positive, negative
 
 
+def _music_text_nodes(graph: dict[str, Any]) -> tuple[str | None, str | None]:
+    """The (prompt, lyrics) nodes in an ACE-Step graph.
+
+    ACE-Step does not use a sampler's positive/negative wiring, so the class
+    name is what tells the two apart: the prompt node carries the style
+    description and the lyrics node the words.
+    """
+    prompt_id = lyrics_id = None
+    for node_id, node in _text_nodes(graph).items():
+        class_type = node.get("class_type")
+        if class_type == "MultiLinePromptACES" and prompt_id is None:
+            prompt_id = node_id
+        elif class_type == "MultiLineLyrics" and lyrics_id is None:
+            lyrics_id = node_id
+    return prompt_id, lyrics_id
+
+
 def _inject_prompt(
-    graph: dict[str, Any], prompt: str, negative: str, kind: str = "image"
+    graph: dict[str, Any],
+    prompt: str,
+    negative: str,
+    kind: str = "image",
+    lyrics: str = "",
 ) -> dict[str, Any]:
-    """Replace the positive and negative text nodes in a user workflow.
+    """Replace the prompt text in a user workflow.
 
     A workflow with no text node at all can only be the built-in graph's job: the
     fallback builds an image graph, so it is only safe for ``kind == "image"``.
@@ -363,6 +525,17 @@ def _inject_prompt(
             )
         return _default_workflow(prompt, negative, 1024, 1024, 25)
 
+    music_prompt, music_lyrics = _music_text_nodes(graph)
+    if music_prompt is not None or music_lyrics is not None:
+        # A music graph has no positive/negative sampler wiring to follow.
+        if music_prompt is not None:
+            node = nodes[music_prompt]
+            node.setdefault("inputs", {})[_text_field(node)] = prompt
+        if music_lyrics is not None:
+            node = nodes[music_lyrics]
+            node.setdefault("inputs", {})[_text_field(node)] = lyrics or _INSTRUMENTAL_LYRICS
+        return graph
+
     positive_id, negative_id = _wired_text_nodes(graph)
 
     # Fall back to declaration order only when the sampler does not say which
@@ -376,9 +549,11 @@ def _inject_prompt(
         negative_id = remaining[0] if remaining else None
 
     if positive_id is not None:
-        nodes[positive_id].setdefault("inputs", {})["text"] = prompt
+        node = nodes[positive_id]
+        node.setdefault("inputs", {})[_text_field(node)] = prompt
     if negative_id is not None and negative_id != positive_id:
-        nodes[negative_id].setdefault("inputs", {})["text"] = negative
+        node = nodes[negative_id]
+        node.setdefault("inputs", {})[_text_field(node)] = negative
     return graph
 
 

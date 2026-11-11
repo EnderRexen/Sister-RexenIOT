@@ -317,7 +317,7 @@ independently — a missing one disables only its own tools.
 | `home_assistant_states` | List entities and states | HA URL + token |
 | `home_assistant_call_service` | Lights, climate, scenes, locks | HA URL + token |
 | `mqtt_publish` | Publish to an MQTT topic | Broker host |
-| `generate_media` | Image, audio, video or 3D via ComfyUI | ComfyUI URL (+ workflow file for non-image) |
+| `generate_media` | Image, music, video or 3D via ComfyUI | ComfyUI URL (music is built in; video/3D need a workflow file) |
 | `comfyui_status` | Check ComfyUI reachability | — |
 | `system_status` | CPU, memory, disk, battery, GPU | — |
 | `list_processes` | Top processes by CPU or memory | — |
@@ -449,6 +449,7 @@ result:
 
 ```
 INFO    workflow 'builtin:image' is ready (6 nodes)
+INFO    workflow 'builtin:music' is ready (6 nodes)
 WARNING workflow 'audio' needs node packs that are not installed: ACEStepSampler, SaveAudio
 ```
 
@@ -460,11 +461,45 @@ gigabytes:
 |---|---|
 | `tools.comfyui_root` | ComfyUI's own folder (the one holding `custom_nodes` and `models`). Found automatically from ComfyUI's process when it runs on this machine. |
 | `tools.comfyui_nodes` | Node packs to clone into `custom_nodes/`, by short name (`manager`, `ace-step`) or git URL. |
-| `tools.comfyui_models` | Model files to download into `models/`, by short name (`ace-step`) or `repo/filename=subdir`. |
+| `tools.comfyui_models` | Models to download into `models/`, by short name (`ace-step`) or `repo/filename=subdir`. A spec with no filename fetches a whole repo, for models that ship as a directory tree. |
 
 Each is a comma-separated list, and all three are empty by default. New node
 packs are read by ComfyUI at its own startup, so restart ComfyUI after one is
 installed — the log says so when that applies.
+
+### Making music
+
+`generate_media` with `kind="audio"` generates a song with ACE-Step, and needs
+no workflow file — the graph is built in. Give it a style in `prompt`, the words
+in `lyrics` (with `[verse]` / `[chorus]` markers), and a length in `duration`:
+
+```
+generate_media(prompt="dreamy synth pop, female vocal",
+               kind="audio",
+               lyrics="[verse]\nStreetlights blur...\n[chorus]\nHold on...",
+               duration=150)
+```
+
+Leaving `lyrics` empty produces an instrumental. Set `tools.comfyui_nodes` to
+`ace-step` and `tools.comfyui_models` to `ace-step` to install what it needs.
+
+Two things about that install are easy to get wrong:
+
+- The `ace-step` short name points at `billwuhao/ComfyUI_ACE-Step`, which runs
+  the model **on your machine**. The similarly named
+  `ace-step/ACE-Step-ComfyUI` is not interchangeable — it is an API proxy that
+  posts to a hosted service, so it generates nothing offline.
+- ACE-Step is not a single checkpoint. It is four component folders
+  (`music_dcae_f8c8`, `music_vocoder`, `ace_step_transformer`, `umt5-base`)
+  under `models/TTS/ACE-Step-v1-3.5B/`, and the node pack loads each one
+  separately. Provisioning fetches the whole tree and treats a partial download
+  as missing rather than usable.
+
+A 2-3 minute song takes minutes to generate even on a fast GPU, so the tool
+waits far longer for audio than it does for an image.
+
+To use your own music graph instead, save it as `data/workflows/audio.json`. The
+built-in graph is only used when no such file exists.
 
 ## Layout
 

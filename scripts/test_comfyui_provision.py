@@ -34,7 +34,8 @@ from app import comfyui_provision as prov  # noqa: E402
 # ---------------------------------------------------------------- model specs
 repo, filename, subdir = prov._parse_model_spec("ace-step")
 check(repo == "ACE-Step/ACE-Step-v1-3.5B", "a known short name resolves to a repo")
-check(subdir == "checkpoints", "a known short name carries its models subdir")
+check(filename == "", "ace-step is a directory-shaped model, not one file")
+check(subdir == "TTS/ACE-Step-v1-3.5B", "ace-step carries its models subdir")
 
 repo, filename, subdir = prov._parse_model_spec("org/repo/file.safetensors=loras")
 check(
@@ -54,8 +55,16 @@ check(
     "a .git suffix is stripped from a node pack name",
 )
 check(
-    prov._node_name("ace-step") == "ComfyUI-ACE-Step",
-    "a known node name maps to its directory",
+    prov._node_name("ace-step") == "ComfyUI_ACE-Step",
+    "the ace-step pack resolves to its directory name",
+)
+check(
+    "billwuhao/ComfyUI_ACE-Step" in prov.KNOWN_NODES["ace-step"],
+    "ace-step points at the pack that runs the model locally",
+)
+check(
+    "ace-step/ACE-Step-ComfyUI" not in prov.KNOWN_NODES["ace-step"],
+    "ace-step does not point at the hosted API-proxy pack",
 )
 
 # ------------------------------------------------------- missing() is offline
@@ -76,13 +85,24 @@ with tempfile.TemporaryDirectory() as tmp:
     check(report["nodes_missing"] == ["ace-step"], "a missing node pack is reported")
     check(report["models_missing"] == ["ace-step"], "a missing model is reported")
 
-    # Now create them and confirm they are seen as present.
-    (root / "custom_nodes" / "ComfyUI-ACE-Step").mkdir()
-    (root / "models" / "checkpoints").mkdir(parents=True)
-    (root / "models" / "checkpoints" / "ace_step_v1_3.5b.safetensors").write_bytes(b"x")
+    # A half-finished download must still read as missing: this is several GB,
+    # so stopping part way is the expected failure.
+    ace = root / "models" / "TTS" / "ACE-Step-v1-3.5B"
+    (ace / "music_dcae_f8c8").mkdir(parents=True)
+    report = prov.missing(T())
+    check(
+        report["models_missing"] == ["ace-step"],
+        "a partially downloaded directory model is still reported missing",
+    )
+
+    # Now create the full tree and confirm it is seen as present.
+    (root / "custom_nodes" / "ComfyUI_ACE-Step").mkdir()
+    for name in prov.DIR_MODEL_COMPONENTS["ACE-Step/ACE-Step-v1-3.5B"]:
+        (ace / name).mkdir(exist_ok=True)
+        (ace / name / "weights.bin").write_bytes(b"x")
     report = prov.missing(T())
     check(report["nodes_missing"] == [], "an installed node pack is not reported missing")
-    check(report["models_missing"] == [], "a present model file is not reported missing")
+    check(report["models_missing"] == [], "a complete directory model is not reported missing")
 
     # An unknown root is reported as unknown, not as "everything missing".
     class Bad:
@@ -168,6 +188,87 @@ check(
     "a non-file output value is ignored",
 )
 check(len(found) == 3, "an entry with no filename is skipped")
+
+# ------------------------------------------------- the built-in music graph
+music = comfy_tool._music_workflow("dreamy synth pop", "harsh noise", "", 90.0, 30)
+classes = {n["class_type"] for n in music.values()}
+check(
+    classes
+    == {
+        "ACEModelLoader",
+        "MultiLinePromptACES",
+        "MultiLineLyrics",
+        "GenerationParameters",
+        "ACEStepGen",
+        "SaveAudioMP3",
+    },
+    "the music graph is the ACE-Step local-inference chain",
+)
+check(
+    all(k.isdigit() for k in music),
+    "every node is keyed by a numeric id, as the API format requires",
+)
+check(
+    not any("API" in n["class_type"] or "Client" in n["class_type"] for n in music.values()),
+    "the music graph names no hosted-service node",
+)
+check(
+    music["1"]["inputs"]["ace_step_checkpoint"] == "ace_step_transformer"
+    and music["1"]["inputs"]["dcae_checkpoint"] == "music_dcae_f8c8",
+    "the loader names the on-disk component folders",
+)
+check(
+    music["2"]["inputs"]["multi_line_prompt"] == "dreamy synth pop",
+    "the style prompt reaches the prompt node",
+)
+check(
+    music["3"]["inputs"]["multi_line_prompt"] == comfy_tool._INSTRUMENTAL_LYRICS,
+    "no lyrics produces an instrumental, not an empty string",
+)
+check(
+    music["4"]["inputs"]["audio_duration"] == 90.0
+    and music["4"]["inputs"]["infer_step"] == 30,
+    "duration and steps reach the generation parameters",
+)
+check(
+    music["5"]["inputs"]["models"] == ["1", 0]
+    and music["5"]["inputs"]["prompt"] == ["2", 0]
+    and music["5"]["inputs"]["lyrics"] == ["3", 0],
+    "the generator is wired to the loader, prompt and lyrics nodes",
+)
+check(
+    music["6"]["inputs"]["audio"] == ["5", 0],
+    "the audio saver reads the generator's audio output",
+)
+check(
+    isinstance(music["4"]["inputs"]["seed"], int),
+    "a seed is generated so repeat runs differ",
+)
+
+# A user-supplied music workflow is injected through, keeping its own lyrics.
+user_music = comfy_tool._music_workflow("x", "y", "words here", 60.0, 20)
+comfy_tool._inject_prompt(user_music, "new style", "noise", "audio", "new words")
+check(
+    user_music["2"]["inputs"]["multi_line_prompt"] == "new style",
+    "the prompt is injected into a music workflow's prompt node",
+)
+check(
+    user_music["3"]["inputs"]["multi_line_prompt"] == "new words",
+    "the lyrics are injected into a music workflow's lyrics node",
+)
+
+# An image workflow is untouched by the music path.
+img = {
+    "1": {"class_type": "CLIPTextEncode", "inputs": {"text": ""}},
+    "2": {"class_type": "CLIPTextEncode", "inputs": {"text": ""}},
+    "3": {
+        "class_type": "KSampler",
+        "inputs": {"positive": ["1", 0], "negative": ["2", 0]},
+    },
+}
+comfy_tool._inject_prompt(img, "a cat", "blurry", "image")
+check(img["1"]["inputs"]["text"] == "a cat", "an image workflow still gets its positive text")
+check(img["2"]["inputs"]["text"] == "blurry", "an image workflow still gets its negative text")
 
 # ------------------------------------ generate_media refuses what it cannot do
 #
@@ -264,8 +365,22 @@ with tempfile.TemporaryDirectory():
         "the built-in image graph is checked and found ready",
     )
     check(
-        report["missing_classes"] == ["ACEStepSampler", "SaveAudio"],
+        "builtin:music" in report["workflows"],
+        "the built-in music graph is checked too",
+    )
+    check(
+        report["workflows"]["builtin:music"]["missing"] == sorted(
+            prov.required_classes(comfy_tool._music_workflow("x", "y", "", 60.0, 20))
+        ),
+        "the music graph's missing classes are exactly the ACE-Step ones",
+    )
+    check(
+        report["missing_classes"] == sorted(set(report["missing_classes"])),
         "the combined missing list is deduplicated",
+    )
+    check(
+        {"ACEStepSampler", "SaveAudio"} <= set(report["missing_classes"]),
+        "the combined list still names the workflow's absent classes",
     )
 
     # With ComfyUI now configured, a request for a kind with no workflow file must
