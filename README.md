@@ -486,9 +486,10 @@ Leaving `lyrics` empty produces an instrumental. Set `tools.comfyui_nodes` to
 Two things about that install are easy to get wrong:
 
 - The `ace-step` short name points at `billwuhao/ComfyUI_ACE-Step`, which runs
-  the model **on your machine**. The similarly named
-  `ace-step/ACE-Step-ComfyUI` is not interchangeable — it is an API proxy that
-  posts to a hosted service, so it generates nothing offline.
+  the model **in ComfyUI itself**. The similarly named
+  `ace-step/ACE-Step-ComfyUI` is not interchangeable: it exposes a different
+  set of node classes and expects a separate inference server, so this graph is
+  rejected by it.
 - ACE-Step is not a single checkpoint. It is four component folders
   (`music_dcae_f8c8`, `music_vocoder`, `ace_step_transformer`, `umt5-base`)
   under `models/TTS/ACE-Step-v1-3.5B/`, and the node pack loads each one

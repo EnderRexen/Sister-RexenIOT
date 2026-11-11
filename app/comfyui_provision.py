@@ -59,8 +59,10 @@ KNOWN_MODELS: dict[str, tuple[str, str, str]] = {
 
 #: Node packs by short name, as git URLs.
 #: ``ace-step`` is billwuhao's pack, which runs the model locally. The similarly
-#: named ``ace-step/ACE-Step-ComfyUI`` is NOT interchangeable: it is an API
-#: proxy that posts to a hosted service, so it generates nothing offline.
+#: named ``ace-step/ACE-Step-ComfyUI`` is NOT interchangeable: it exposes a
+#: different set of node classes (``AceStepText2MusicServer`` and friends, not
+#: ``ACEStepGen``/``ACEModelLoader``), so a graph built for one is rejected by
+#: the other.
 KNOWN_NODES: dict[str, str] = {
     "manager": "https://github.com/ltdrdata/ComfyUI-Manager",
     "ace-step": "https://github.com/billwuhao/ComfyUI_ACE-Step",

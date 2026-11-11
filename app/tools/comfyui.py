@@ -122,10 +122,9 @@ def _music_workflow(
     """A minimal ACE-Step text-to-music graph.
 
     Mirrors the ACE-Step ComfyUI pack's own text2music example, minus the nodes
-    that only exist to help a human edit the prompt in the UI. The pack's nodes
-    are the ones that actually run the model locally; the similarly named
-    official ACE-Step pack is an API proxy for a hosted service, so a graph
-    built for it would not work here.
+    that only exist to help a human edit the prompt in the UI. The node classes
+    here come from billwuhao's pack; the similarly named official ACE-Step pack
+    names a different set, so a graph built for one is rejected by the other.
 
     ``duration`` is seconds of audio. ACE-Step conditions the length up front,
     so it is a real generation parameter rather than a trim.
