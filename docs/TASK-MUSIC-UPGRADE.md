@@ -1,7 +1,27 @@
 # Task: upgrade music generation to ACE-Step 1.5
 
-Status: **planned, not implemented.** Researched and verified against the live
-host on 2026-11-16.
+Status: **implemented** (2026-11-17). Researched and verified against the live
+host on 2026-11-16; implemented and validated on 2026-11-17.
+
+## What was done
+
+- `app/tools/comfyui.py`: `_music_workflow()` rebuilt as the 1.5 core graph
+  (`CheckpointLoaderSimple`, `TextEncodeAceStepAudio1.5`,
+  `EmptyAceStep1.5LatentAudio`, `ModelSamplingAuraFlow`, `ConditioningZeroOut`,
+  `KSampler`, `VAEDecodeAudio`, `SaveAudioMP3`).
+- `_music_text_nodes()` now returns a `(node id, field)` pair per target, so the
+  style and the lyrics are distinguished by **field** within one node. A v1
+  two-node graph still injects correctly.
+- `app/comfyui_provision.py`: `KNOWN_MODELS["ace-step"]` is the 10 GB
+  `Comfy-Org/ACE-Step-1.5` all-in-one checkpoint; `KNOWN_NODES` no longer lists
+  any music pack; `DIR_MODEL_COMPONENTS` is empty.
+- Duration ceiling raised to 600 s (1.5's supported maximum) and steps to 50.
+- Tests updated; both suites pass.
+
+Validated against the **live** ComfyUI: every node class, every input name,
+every link target/slot and every value was checked against the running server's
+`/object_info` (1,926 node classes). All pass. The only unmet requirement is the
+10 GB checkpoint, which was deliberately not downloaded.
 
 ## First: music is broken right now
 
@@ -114,32 +134,31 @@ Repo: `Comfy-Org/ACE-Step-1.5` (also mirrored as
 
 ## Work
 
-1. **Provision the weights.** `app/comfyui_provision.py` holds `KNOWN_NODES`
-   and `DIR_MODEL_COMPONENTS`. 1.5 is a single checkpoint, not a directory of
-   components, so it needs a file-level entry rather than a `DIR_MODEL_COMPONENTS`
-   tuple. Extend the existing mechanism instead of adding a parallel one.
-   Nothing named `ace*` is on disk yet, so this download has to happen.
-2. **Swap the built-in music graph.** `_music_workflow()` in
-   `app/tools/comfyui.py` builds the v1 graph (`ACEModelLoader`,
-   `MultiLinePromptACES`, `MultiLineLyrics`, `GenerationParameters`,
-   `ACEStepGen`, `SaveAudioMP3`). Replace it with the 1.5 core graph above.
-3. **Drop the v1 node pack from provisioning.** `KNOWN_NODES["ace-step"]`
-   points at `billwuhao/ComfyUI_ACE-Step`, which is no longer installed and no
-   longer needed. Keeping it would re-clone a pack the graph does not use.
-4. **Update `_TEXT_INPUT_FIELDS` and `_music_text_nodes()`.** The prompt/lyrics
-   split currently keys off `MultiLinePromptACES` / `MultiLineLyrics`. In 1.5
-   both live in **one** node, `TextEncodeAceStepAudio1.5`, with separate `tags`
-   and `lyrics` fields. This is the subtle part: a single node now carries both,
-   so the "which node is which" logic has to become "which *field* is which".
-   Get it wrong and the style description silently becomes the lyrics.
-5. **Keep `kind="audio"` working** for a bare request, since the built-in graph
-   is what makes music work with no workflow file present.
-6. **Test it.** `scripts/test_comfyui_provision.py` and
-   `scripts/test_comfyui_workflow.py` both assert on the current graph and node
-   names; they will need updating in the same change, not afterwards.
-7. **Prove it end to end**, the same way image generation was proven: request a
-   song from the chat interface, confirm real audio comes back, and confirm two
-   requests do not return the same file.
+Done:
+
+1. **Provision the weights.** `KNOWN_MODELS["ace-step"]` is now the AIO
+   checkpoint, with an empty subdir because the filename carries its own
+   `checkpoints/` path.
+2. **Swap the built-in music graph.** `_music_workflow()` builds the 1.5 core
+   graph.
+3. **Drop the v1 node pack from provisioning.** `KNOWN_NODES["ace-step"]` is
+   gone; no music pack is listed, because 1.5 needs none.
+4. **Update `_TEXT_INPUT_FIELDS` and `_music_text_nodes()`.** The subtle part
+   flagged here was real: both targets are now `(node id, field)` pairs, because
+   one node carries both `tags` and `lyrics`. A v1 two-node graph is still
+   handled, and there is a test for each shape.
+5. **Keep `kind="audio"` working** for a bare request.
+6. **Tests updated** in the same change.
+
+Outstanding:
+
+7. **Download the 10 GB checkpoint** (`tools.comfyui_models = ["ace-step"]`).
+   Not done here -- it is a large download and a decision for the machine's
+   owner, not something to start unprompted.
+8. **Prove it end to end** once the weights are present: request a song from the
+   chat, confirm real audio comes back, and confirm two requests do not return
+   the same file. The graph is already validated against the live server's
+   `/object_info`, so this step is about the weights, not the graph.
 
 ## Deciding how far to go
 
@@ -157,17 +176,21 @@ Recommend doing the minimum first and proving it, then adding capabilities.
 
 Suno's v6 family (flagship / wild / mini) is closed and hosted; there is no
 open model that is simply equivalent, and any claim otherwise should be treated
-with suspicion. What can be said honestly:
+with suspicion. The strongest evidence found says 1.5 does **not** reach v6:
 
-- ACE-Step 1.5 is the strongest **open, commercially usable** option, and the
-  project claims quality "beyond most commercial music models".
-- The independent signals agree it is top-tier: 971 likes, ~15k GitHub stars,
-  and it is what ComfyUI chose to support natively.
-- Whether it *sounds* like v6 is a listening question, not a spec question.
-  Settle it by generating the same prompt through both and comparing -- the same
-  way the two image paths were compared.
+- ACE-Step's own README claims quality "between Suno v4.5 and Suno v5", not v6.
+  That is the vendor grading its own product, and it places the target a
+  generation short of what was asked for.
+- ACE-Step 1.5 is still the strongest **open, commercially usable** option: 971
+  likes, ~15k GitHub stars, MIT licensed, and it is what ComfyUI chose to
+  support natively. The alternatives are worse on licensing or are gated
+  (YuE2-3B is CC-BY-NC, so not commercially usable at all).
 
-Do not promise v6 parity. Promise the best local model, and measure it.
+So the honest position is: this is the best local model available, and it is a
+generation behind Suno v6 on the vendor's own numbers. Whether it *sounds* close
+enough is a listening question, not a spec question. Settle it by generating the
+same prompt through both and comparing -- the same way the two image paths were
+compared. Do not promise v6 parity; measure it.
 
 ## Sources
 

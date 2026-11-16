@@ -38,18 +38,29 @@ _FILE_KEYS = ("images", "audio", "gifs", "video", "videos", "3d", "files")
 #: Node classes that carry a text prompt, and the input field holding the text.
 #: The ACE-Step nodes name their field ``multi_line_prompt`` rather than
 #: ``text``, so a music workflow has no CLIPTextEncode to inject into.
+#: ``TextEncodeAceStepAudio1.5`` is the exception that holds *two* pieces of
+#: text -- the style description and the lyrics -- so it is listed once per
+#: field; see :func:`_music_text_nodes`.
 _TEXT_INPUT_FIELDS = {
     "CLIPTextEncode": "text",
+    "TextEncodeAceStepAudio1.5": "tags",
     "MultiLinePromptACES": "multi_line_prompt",
     "MultiLineLyrics": "multi_line_prompt",
 }
 
-#: ACE-Step model directories, relative to ComfyUI's models dir. The node pack
-#: loads each as a directory of weights, not a single file.
-ACE_STEP_MODEL_DIR = "TTS/ACE-Step-v1-3.5B"
-ACE_STEP_SUBDIRS = ("music_dcae_f8c8", "music_vocoder", "ace_step_transformer", "umt5-base")
+#: The field inside ``TextEncodeAceStepAudio1.5`` that carries the lyrics.
+#: ACE-Step 1.5 folded the separate prompt and lyrics nodes of v1 into one node
+#: with a field each, so telling the two apart is a question of *which field*
+#: rather than which node.
+_ACE15_LYRICS_FIELD = "lyrics"
 
-#: ACE-Step's marker for a track with no vocals.
+#: ACE-Step 1.5's all-in-one checkpoint, as Comfy-Org packages it. One file
+#: holding the DiT, the text encoder and the VAE, so a single download is
+#: enough -- no node pack and no component directories to keep in step.
+ACE_STEP_15_CHECKPOINT = "ace_step_1.5_turbo_aio.safetensors"
+
+#: ACE-Step's marker for a track with no vocals. 1.5 keeps the same convention
+#: as v1, where the words field holds ``[inst]`` instead of lyric lines.
 _INSTRUMENTAL_LYRICS = "[inst]"
 
 
@@ -119,75 +130,85 @@ def _music_workflow(
     duration: float,
     steps: int,
 ) -> dict[str, Any]:
-    """A minimal ACE-Step text-to-music graph.
+    """A minimal ACE-Step 1.5 text-to-music graph.
 
-    Mirrors the ACE-Step ComfyUI pack's own text2music example, minus the nodes
-    that only exist to help a human edit the prompt in the UI. The node classes
-    here come from billwuhao's pack; the similarly named official ACE-Step pack
-    names a different set, so a graph built for one is rejected by the other.
+    Runs on ComfyUI core, so no custom node pack is needed -- which is the point.
+    v1 needed ``billwuhao/ComfyUI_ACE-Step``; the official ACE-Step pack that
+    replaced it is a cloud-first server/client design and does not fit a graph
+    submitted straight to ``/prompt``. Core support sidesteps both.
 
     ``duration`` is seconds of audio. ACE-Step conditions the length up front,
-    so it is a real generation parameter rather than a trim.
+    so it is a real generation parameter rather than a trim. It is set on both
+    the text encoder and the empty latent: the encoder plans a song of that
+    length, and the latent has to match or the two disagree.
+
+    ``negative`` is accepted for signature compatibility but is **not** used:
+    1.5 is step-distilled and samples at ``cfg=1.0``, where a negative prompt has
+    no effect. The negative branch is fed zeroed-out conditioning, as ComfyUI's
+    own 1.5 template does.
     """
     seed = _fresh_seed()
-    params = {
-        "audio_duration": float(duration),
-        "infer_step": int(steps),
-        "guidance_scale": 15.0,
-        "scheduler_type": "euler",
-        "cfg_type": "apg",
-        "omega_scale": 10.0,
-        "seed": seed,
-        "guidance_interval": 0.5,
-        "guidance_interval_decay": 0.0,
-        "min_guidance_scale": 3,
-        "use_erg_tag": True,
-        "use_erg_lyric": True,
-        "use_erg_diffusion": True,
-        "oss_steps": "",
-        "guidance_scale_text": 0.0,
-        "guidance_scale_lyric": 0.0,
-    }
+    seconds = float(duration)
     return {
         "1": {
-            "class_type": "ACEModelLoader",
-            "inputs": {
-                "dcae_checkpoint": "music_dcae_f8c8",
-                "vocoder_checkpoint": "music_vocoder",
-                "ace_step_checkpoint": "ace_step_transformer",
-                "text_encoder_checkpoint": "umt5-base",
-                "cpu_offload": False,
-                "torch_compile": False,
-            },
+            "class_type": "CheckpointLoaderSimple",
+            "inputs": {"ckpt_name": ACE_STEP_15_CHECKPOINT},
         },
         "2": {
-            "class_type": "MultiLinePromptACES",
-            "inputs": {"multi_line_prompt": prompt},
-        },
-        "3": {
-            "class_type": "MultiLineLyrics",
-            "inputs": {"multi_line_prompt": lyrics or _INSTRUMENTAL_LYRICS},
-        },
-        "4": {
-            "class_type": "GenerationParameters",
-            "inputs": params,
-        },
-        "5": {
-            "class_type": "ACEStepGen",
+            "class_type": "TextEncodeAceStepAudio1.5",
             "inputs": {
-                "models": ["1", 0],
-                "prompt": ["2", 0],
-                "lyrics": ["3", 0],
-                "parameters": ["4", 0],
-                "negative_prompt": negative,
-                "overlapped_decode": False,
-                "delicious_song": "None",
+                "clip": ["1", 1],
+                "tags": prompt,
+                "lyrics": lyrics or _INSTRUMENTAL_LYRICS,
+                "seed": seed,
+                "bpm": 120,
+                "duration": seconds,
+                "timesignature": "4",
+                "language": "en",
+                "keyscale": "C major",
+                "generate_audio_codes": True,
+                "cfg_scale": 2.0,
+                "temperature": 0.85,
+                "top_p": 0.9,
+                "top_k": 0,
+                "min_p": 0.0,
             },
         },
+        "3": {
+            "class_type": "EmptyAceStep1.5LatentAudio",
+            "inputs": {"seconds": seconds, "batch_size": 1},
+        },
+        "4": {
+            "class_type": "ModelSamplingAuraFlow",
+            "inputs": {"model": ["1", 0], "shift": 3.0},
+        },
+        "5": {
+            "class_type": "ConditioningZeroOut",
+            "inputs": {"conditioning": ["2", 0]},
+        },
         "6": {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": ["4", 0],
+                "seed": seed,
+                "steps": int(steps),
+                "cfg": 1.0,
+                "sampler_name": "euler",
+                "scheduler": "simple",
+                "positive": ["2", 0],
+                "negative": ["5", 0],
+                "latent_image": ["3", 0],
+                "denoise": 1.0,
+            },
+        },
+        "7": {
+            "class_type": "VAEDecodeAudio",
+            "inputs": {"samples": ["6", 0], "vae": ["1", 2]},
+        },
+        "8": {
             "class_type": "SaveAudioMP3",
             "inputs": {
-                "audio": ["5", 0],
+                "audio": ["7", 0],
                 "filename_prefix": "rexeniot/song",
                 "quality": "V0",
             },
@@ -268,9 +289,9 @@ def _collect_outputs(outputs: dict[str, Any]) -> list[dict[str, str]]:
 @registry.add(
     "generate_media",
     "Generate an image, or audio, video or 3D output, through ComfyUI. Use for "
-    "'draw me', 'make a picture of', or a song when a music workflow is installed. "
-    "Images use a built-in graph; other kinds need a workflow file. Results are "
-    "shown in the chat.",
+    "'draw me', 'make a picture of', or a song -- music is built in, so a song "
+    "works with no workflow installed. Images use a built-in graph; video and 3D "
+    "need a workflow file. Results are shown in the chat.",
     {
         "type": "object",
         "properties": {
@@ -347,10 +368,11 @@ async def generate_media(
         break
 
     if graph is None and kind == "audio":
-        # Music needs no workflow file: the ACE-Step graph is built in, so a
-        # request works as soon as the node pack and weights are present.
-        duration = max(10.0, min(float(duration), 240.0))
-        steps = max(10, min(int(steps), 100))
+        # Music needs no workflow file: the ACE-Step 1.5 graph is built in and
+        # runs on ComfyUI core, so a request works as soon as the checkpoint is
+        # on disk.
+        duration = max(10.0, min(float(duration), 600.0))
+        steps = max(4, min(int(steps), 50))
         graph = _music_workflow(prompt, negative_prompt, lyrics, duration, steps)
 
     if graph is None:
@@ -508,21 +530,39 @@ def _wired_text_nodes(graph: dict[str, Any]) -> tuple[str | None, str | None]:
     return positive, negative
 
 
-def _music_text_nodes(graph: dict[str, Any]) -> tuple[str | None, str | None]:
-    """The (prompt, lyrics) nodes in an ACE-Step graph.
+def _music_text_nodes(
+    graph: dict[str, Any],
+) -> tuple[tuple[str, str] | None, tuple[str, str] | None]:
+    """The (node id, field) to write the style prompt and the lyrics into.
 
-    ACE-Step does not use a sampler's positive/negative wiring, so the class
-    name is what tells the two apart: the prompt node carries the style
-    description and the lyrics node the words.
+    Two shapes have to be recognised, and they differ in a way that matters:
+
+    * **v1** used two nodes -- ``MultiLinePromptACES`` for the style and
+      ``MultiLineLyrics`` for the words -- so the class name told them apart.
+    * **1.5** folded both into one ``TextEncodeAceStepAudio1.5`` node with a
+      ``tags`` field and a ``lyrics`` field. Which text goes where is now a
+      question of *field*, not of node. Writing the style description into
+      ``lyrics`` (or the reverse) is a silent, plausible-looking failure, so the
+      two are returned separately rather than as a single node id.
+
+    Returns ``(prompt_target, lyrics_target)``, each ``(node_id, field)`` or
+    ``None`` when the graph has no such thing.
     """
-    prompt_id = lyrics_id = None
+    prompt_target: tuple[str, str] | None = None
+    lyrics_target: tuple[str, str] | None = None
     for node_id, node in _text_nodes(graph).items():
         class_type = node.get("class_type")
-        if class_type == "MultiLinePromptACES" and prompt_id is None:
-            prompt_id = node_id
-        elif class_type == "MultiLineLyrics" and lyrics_id is None:
-            lyrics_id = node_id
-    return prompt_id, lyrics_id
+        if class_type == "TextEncodeAceStepAudio1.5":
+            # One node, two fields: both targets point at it.
+            if prompt_target is None:
+                prompt_target = (node_id, _text_field(node))
+            if lyrics_target is None:
+                lyrics_target = (node_id, _ACE15_LYRICS_FIELD)
+        elif class_type == "MultiLinePromptACES" and prompt_target is None:
+            prompt_target = (node_id, _text_field(node))
+        elif class_type == "MultiLineLyrics" and lyrics_target is None:
+            lyrics_target = (node_id, _text_field(node))
+    return prompt_target, lyrics_target
 
 
 def _inject_prompt(
@@ -552,12 +592,14 @@ def _inject_prompt(
     music_prompt, music_lyrics = _music_text_nodes(graph)
     if music_prompt is not None or music_lyrics is not None:
         # A music graph has no positive/negative sampler wiring to follow.
+        # Each target is a (node id, field) pair, because ACE-Step 1.5 keeps the
+        # style and the lyrics in two fields of the same node.
         if music_prompt is not None:
-            node = nodes[music_prompt]
-            node.setdefault("inputs", {})[_text_field(node)] = prompt
+            node_id, field = music_prompt
+            nodes[node_id].setdefault("inputs", {})[field] = prompt
         if music_lyrics is not None:
-            node = nodes[music_lyrics]
-            node.setdefault("inputs", {})[_text_field(node)] = lyrics or _INSTRUMENTAL_LYRICS
+            node_id, field = music_lyrics
+            nodes[node_id].setdefault("inputs", {})[field] = lyrics or _INSTRUMENTAL_LYRICS
         return graph
 
     positive_id, negative_id = _wired_text_nodes(graph)

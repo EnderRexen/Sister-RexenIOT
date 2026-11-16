@@ -33,9 +33,20 @@ from app import comfyui_provision as prov  # noqa: E402
 
 # ---------------------------------------------------------------- model specs
 repo, filename, subdir = prov._parse_model_spec("ace-step")
-check(repo == "ACE-Step/ACE-Step-v1-3.5B", "a known short name resolves to a repo")
-check(filename == "", "ace-step is a directory-shaped model, not one file")
-check(subdir == "TTS/ACE-Step-v1-3.5B", "ace-step carries its models subdir")
+check(repo == "Comfy-Org/ACE-Step-1.5", "a known short name resolves to a repo")
+check(
+    filename == "checkpoints/ace_step_1.5_turbo_aio.safetensors",
+    "ace-step is the all-in-one checkpoint, not a directory of components",
+)
+check(
+    subdir == "",
+    "ace-step carries no extra models subdir: the filename already has its path",
+)
+check(
+    (Path("models") / subdir / filename).as_posix()
+    == "models/checkpoints/ace_step_1.5_turbo_aio.safetensors",
+    "the file lands in models/checkpoints/, where ComfyUI looks for a checkpoint",
+)
 
 repo, filename, subdir = prov._parse_model_spec("org/repo/file.safetensors=loras")
 check(
@@ -55,16 +66,12 @@ check(
     "a .git suffix is stripped from a node pack name",
 )
 check(
-    prov._node_name("ace-step") == "ComfyUI_ACE-Step",
-    "the ace-step pack resolves to its directory name",
+    "ace-step" not in prov.KNOWN_NODES,
+    "no ACE-Step node pack is known: 1.5 runs on ComfyUI core and needs none",
 )
 check(
-    "billwuhao/ComfyUI_ACE-Step" in prov.KNOWN_NODES["ace-step"],
-    "ace-step points at the pack that runs the model locally",
-)
-check(
-    "ace-step/ACE-Step-ComfyUI" not in prov.KNOWN_NODES["ace-step"],
-    "ace-step does not point at the hosted API-proxy pack",
+    "manager" in prov.KNOWN_NODES,
+    "the manager pack is still known, for operators who want it",
 )
 
 # ------------------------------------------------------- missing() is offline
@@ -77,37 +84,45 @@ with tempfile.TemporaryDirectory() as tmp:
 
     class T:
         comfyui_root = str(root)
-        comfyui_nodes = ["ace-step"]
+        comfyui_nodes = ["manager"]
         comfyui_models = ["ace-step"]
 
     report = prov.missing(T())
     check(report["root"] == str(root), "an explicit root is used as-is")
-    check(report["nodes_missing"] == ["ace-step"], "a missing node pack is reported")
+    check(report["nodes_missing"] == ["manager"], "a missing node pack is reported")
     check(report["models_missing"] == ["ace-step"], "a missing model is reported")
 
     # A half-finished download must still read as missing: this is several GB,
-    # so stopping part way is the expected failure.
-    ace = root / "models" / "TTS" / "ACE-Step-v1-3.5B"
-    (ace / "music_dcae_f8c8").mkdir(parents=True)
+    # so stopping part way is the expected failure. For a single-file model that
+    # means an absent file, however much of the tree around it exists.
+    ckpt_dir = root / "models" / "checkpoints"
+    ckpt_dir.mkdir(parents=True)
     report = prov.missing(T())
     check(
         report["models_missing"] == ["ace-step"],
-        "a partially downloaded directory model is still reported missing",
+        "a checkpoint that is not on disk is reported missing",
     )
 
-    # Now create the full tree and confirm it is seen as present.
-    (root / "custom_nodes" / "ComfyUI_ACE-Step").mkdir()
-    for name in prov.DIR_MODEL_COMPONENTS["ACE-Step/ACE-Step-v1-3.5B"]:
-        (ace / name).mkdir(exist_ok=True)
-        (ace / name / "weights.bin").write_bytes(b"x")
+    # A partial file must not count as present, which is why the check is for a
+    # file rather than for a directory that merely exists.
+    (ckpt_dir / "ace_step_1.5_turbo_aio.safetensors.partial").write_bytes(b"x")
+    report = prov.missing(T())
+    check(
+        report["models_missing"] == ["ace-step"],
+        "a partially downloaded checkpoint is still reported missing",
+    )
+
+    # Now create the real file and confirm it is seen as present.
+    (root / "custom_nodes" / "ComfyUI-Manager").mkdir()
+    (ckpt_dir / "ace_step_1.5_turbo_aio.safetensors").write_bytes(b"x")
     report = prov.missing(T())
     check(report["nodes_missing"] == [], "an installed node pack is not reported missing")
-    check(report["models_missing"] == [], "a complete directory model is not reported missing")
+    check(report["models_missing"] == [], "a downloaded checkpoint is not reported missing")
 
     # An unknown root is reported as unknown, not as "everything missing".
     class Bad:
         comfyui_root = str(root / "does-not-exist")
-        comfyui_nodes = ["ace-step"]
+        comfyui_nodes = ["manager"]
         comfyui_models = []
 
     report = prov.missing(Bad())
@@ -190,19 +205,21 @@ check(
 check(len(found) == 3, "an entry with no filename is skipped")
 
 # ------------------------------------------------- the built-in music graph
-music = comfy_tool._music_workflow("dreamy synth pop", "harsh noise", "", 90.0, 30)
+music = comfy_tool._music_workflow("dreamy synth pop", "harsh noise", "", 90.0, 8)
 classes = {n["class_type"] for n in music.values()}
 check(
     classes
     == {
-        "ACEModelLoader",
-        "MultiLinePromptACES",
-        "MultiLineLyrics",
-        "GenerationParameters",
-        "ACEStepGen",
+        "CheckpointLoaderSimple",
+        "TextEncodeAceStepAudio1.5",
+        "EmptyAceStep1.5LatentAudio",
+        "ModelSamplingAuraFlow",
+        "ConditioningZeroOut",
+        "KSampler",
+        "VAEDecodeAudio",
         "SaveAudioMP3",
     },
-    "the music graph is the ACE-Step local-inference chain",
+    "the music graph is the ACE-Step 1.5 chain on ComfyUI core",
 )
 check(
     all(k.isdigit() for k in music),
@@ -213,48 +230,92 @@ check(
     "the music graph names no hosted-service node",
 )
 check(
-    music["1"]["inputs"]["ace_step_checkpoint"] == "ace_step_transformer"
-    and music["1"]["inputs"]["dcae_checkpoint"] == "music_dcae_f8c8",
-    "the loader names the on-disk component folders",
+    music["1"]["inputs"]["ckpt_name"] == comfy_tool.ACE_STEP_15_CHECKPOINT,
+    "the loader names the ACE-Step 1.5 all-in-one checkpoint",
 )
 check(
-    music["2"]["inputs"]["multi_line_prompt"] == "dreamy synth pop",
-    "the style prompt reaches the prompt node",
+    music["2"]["inputs"]["tags"] == "dreamy synth pop",
+    "the style prompt reaches the tags field",
 )
 check(
-    music["3"]["inputs"]["multi_line_prompt"] == comfy_tool._INSTRUMENTAL_LYRICS,
+    music["2"]["inputs"]["lyrics"] == comfy_tool._INSTRUMENTAL_LYRICS,
     "no lyrics produces an instrumental, not an empty string",
 )
 check(
-    music["4"]["inputs"]["audio_duration"] == 90.0
-    and music["4"]["inputs"]["infer_step"] == 30,
-    "duration and steps reach the generation parameters",
+    music["2"]["inputs"]["duration"] == 90.0 and music["3"]["inputs"]["seconds"] == 90.0,
+    "the duration reaches both the text encoder and the empty latent",
 )
 check(
-    music["5"]["inputs"]["models"] == ["1", 0]
-    and music["5"]["inputs"]["prompt"] == ["2", 0]
-    and music["5"]["inputs"]["lyrics"] == ["3", 0],
-    "the generator is wired to the loader, prompt and lyrics nodes",
+    music["6"]["inputs"]["steps"] == 8
+    and music["6"]["inputs"]["cfg"] == 1.0
+    and music["6"]["inputs"]["sampler_name"] == "euler"
+    and music["6"]["inputs"]["scheduler"] == "simple",
+    "the sampler uses the step-distilled turbo settings",
 )
 check(
-    music["6"]["inputs"]["audio"] == ["5", 0],
-    "the audio saver reads the generator's audio output",
+    music["6"]["inputs"]["positive"] == ["2", 0]
+    and music["6"]["inputs"]["negative"] == ["5", 0]
+    and music["5"]["inputs"]["conditioning"] == ["2", 0],
+    "the sampler reads the encoder, and the negative is zeroed-out conditioning",
 )
 check(
-    isinstance(music["4"]["inputs"]["seed"], int),
-    "a seed is generated so repeat runs differ",
+    music["4"]["inputs"]["model"] == ["1", 0] and music["6"]["inputs"]["model"] == ["4", 0],
+    "the model is routed through ModelSamplingAuraFlow before sampling",
+)
+check(
+    music["7"]["inputs"]["vae"] == ["1", 2],
+    "the audio decoder takes the VAE from the checkpoint loader",
+)
+check(
+    music["8"]["inputs"]["audio"] == ["7", 0],
+    "the audio saver reads the decoder's audio output",
+)
+check(
+    isinstance(music["6"]["inputs"]["seed"], int)
+    and music["2"]["inputs"]["seed"] == music["6"]["inputs"]["seed"],
+    "a seed is generated so repeat runs differ, and both nodes share it",
 )
 
-# A user-supplied music workflow is injected through, keeping its own lyrics.
-user_music = comfy_tool._music_workflow("x", "y", "words here", 60.0, 20)
-comfy_tool._inject_prompt(user_music, "new style", "noise", "audio", "new words")
+# ------------------------------------- the prompt/lyrics split in ACE-Step 1.5
+# 1.5 keeps both pieces of text in ONE node, as two fields. Writing the style
+# into `lyrics` (or the words into `tags`) would look fine and sing the wrong
+# thing, so each target is checked by field and not just by node.
+prompt_target, lyrics_target = comfy_tool._music_text_nodes(music)
 check(
-    user_music["2"]["inputs"]["multi_line_prompt"] == "new style",
-    "the prompt is injected into a music workflow's prompt node",
+    prompt_target == ("2", "tags"),
+    f"the style prompt is aimed at the tags field, got {prompt_target}",
 )
 check(
-    user_music["3"]["inputs"]["multi_line_prompt"] == "new words",
-    "the lyrics are injected into a music workflow's lyrics node",
+    lyrics_target == ("2", "lyrics"),
+    f"the lyrics are aimed at the lyrics field, got {lyrics_target}",
+)
+check(
+    prompt_target[0] == lyrics_target[0],
+    "both targets are the same node, as 1.5 folds them into one",
+)
+
+user_music = comfy_tool._music_workflow("x", "y", "words here", 60.0, 8)
+comfy_tool._inject_prompt(user_music, "new style", "noise", "audio", "new words")
+check(
+    user_music["2"]["inputs"]["tags"] == "new style",
+    "the prompt is injected into the tags field",
+)
+check(
+    user_music["2"]["inputs"]["lyrics"] == "new words",
+    "the lyrics are injected into the lyrics field",
+)
+
+# A v1-shaped music workflow must still inject correctly: the two fields live in
+# two separate nodes there, so the field-level logic has to cope with both shapes.
+v1_music = {
+    "2": {"class_type": "MultiLinePromptACES", "inputs": {"multi_line_prompt": ""}},
+    "3": {"class_type": "MultiLineLyrics", "inputs": {"multi_line_prompt": ""}},
+}
+comfy_tool._inject_prompt(v1_music, "v1 style", "noise", "audio", "v1 words")
+check(
+    v1_music["2"]["inputs"]["multi_line_prompt"] == "v1 style"
+    and v1_music["3"]["inputs"]["multi_line_prompt"] == "v1 words",
+    "a v1 two-node music workflow still injects into the right node each",
 )
 
 # An image workflow is untouched by the music path.
@@ -293,7 +354,18 @@ _SERVED = {
         "VAEDecode": {},
         "EmptyLatentImage": {},
         "SaveImage": {},
-        # SaveAudio and ACEStepSampler are deliberately absent.
+        # The ACE-Step 1.5 nodes ship with ComfyUI itself, so a real server
+        # always offers them. Listing them here is what lets the built-in music
+        # graph be reported ready with no node pack installed -- the point of
+        # moving off the v1 pack.
+        "TextEncodeAceStepAudio1.5": {},
+        "EmptyAceStep1.5LatentAudio": {},
+        "ModelSamplingAuraFlow": {},
+        "ConditioningZeroOut": {},
+        "VAEDecodeAudio": {},
+        "SaveAudioMP3": {},
+        # SaveAudio and ACEStepSampler are deliberately absent: they stand in
+        # for a workflow that names node classes the server does not have.
     },
     "system_stats": {"system": {}},
 }
@@ -369,10 +441,12 @@ with tempfile.TemporaryDirectory():
         "the built-in music graph is checked too",
     )
     check(
-        report["workflows"]["builtin:music"]["missing"] == sorted(
-            prov.required_classes(comfy_tool._music_workflow("x", "y", "", 60.0, 20))
-        ),
-        "the music graph's missing classes are exactly the ACE-Step ones",
+        report["workflows"]["builtin:music"]["missing"] == [],
+        "the built-in music graph needs no node pack: its classes are ComfyUI core",
+    )
+    check(
+        report["workflows"]["builtin:music"]["ready"],
+        "the built-in music graph is ready, so a song works with nothing installed",
     )
     check(
         report["missing_classes"] == sorted(set(report["missing_classes"])),

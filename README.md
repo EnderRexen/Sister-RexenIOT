@@ -460,7 +460,7 @@ gigabytes:
 | Setting | Meaning |
 |---|---|
 | `tools.comfyui_root` | ComfyUI's own folder (the one holding `custom_nodes` and `models`). Found automatically from ComfyUI's process when it runs on this machine. |
-| `tools.comfyui_nodes` | Node packs to clone into `custom_nodes/`, by short name (`manager`, `ace-step`) or git URL. |
+| `tools.comfyui_nodes` | Node packs to clone into `custom_nodes/`, by short name (`manager`) or git URL. Music needs none — see below. |
 | `tools.comfyui_models` | Models to download into `models/`, by short name (`ace-step`) or `repo/filename=subdir`. A spec with no filename fetches a whole repo, for models that ship as a directory tree. |
 
 Each is a comma-separated list, and all three are empty by default. New node
@@ -480,21 +480,25 @@ generate_media(prompt="dreamy synth pop, female vocal",
                duration=150)
 ```
 
-Leaving `lyrics` empty produces an instrumental. Set `tools.comfyui_nodes` to
-`ace-step` and `tools.comfyui_models` to `ace-step` to install what it needs.
+Leaving `lyrics` empty produces an instrumental. Set `tools.comfyui_models` to
+`ace-step` to install what it needs. You do not need to set
+`tools.comfyui_nodes` at all: ACE-Step 1.5 runs on **ComfyUI core**, so there is
+no node pack to install and no restart to remember.
 
 Two things about that install are easy to get wrong:
 
-- The `ace-step` short name points at `billwuhao/ComfyUI_ACE-Step`, which runs
-  the model **in ComfyUI itself**. The similarly named
-  `ace-step/ACE-Step-ComfyUI` is not interchangeable: it exposes a different
-  set of node classes and expects a separate inference server, so this graph is
-  rejected by it.
-- ACE-Step is not a single checkpoint. It is four component folders
-  (`music_dcae_f8c8`, `music_vocoder`, `ace_step_transformer`, `umt5-base`)
-  under `models/TTS/ACE-Step-v1-3.5B/`, and the node pack loads each one
-  separately. Provisioning fetches the whole tree and treats a partial download
-  as missing rather than usable.
+- The built-in graph is **ACE-Step 1.5**. It is a different node set from ACE-Step
+  v1, which needed `billwuhao/ComfyUI_ACE-Step` and the four component folders
+  under `models/TTS/ACE-Step-v1-3.5B/`. If you have that v1 pack and those
+  weights, they are not used by this graph and can stay or go; nothing here
+  depends on them.
+- The weights are one all-in-one checkpoint, `ace_step_1.5_turbo_aio.safetensors`,
+  which lands in `models/checkpoints/`. It bundles the DiT, the text encoder and
+  the VAE, so there is no component tree to keep in step.
+
+Note also that `ace-step/ACE-Step-ComfyUI` is **not** what this uses. It is a
+cloud-first server/client pack — it expects a separate inference server — so a
+graph submitted straight to ComfyUI's `/prompt` is rejected by it.
 
 A 2-3 minute song takes minutes to generate even on a fast GPU, so the tool
 waits far longer for audio than it does for an image.

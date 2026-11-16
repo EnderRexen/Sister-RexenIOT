@@ -42,14 +42,21 @@ log = logging.getLogger("rexeniot.comfyui")
 #: Model files worth knowing by a short name, so the config stays readable.
 #: Each entry is (huggingface repo, filename, ComfyUI models/ subdirectory).
 #: A filename of "" means the entry is a *directory* of weights, fetched whole
-#: into that subdirectory -- which is how ACE-Step ships.
+#: into that subdirectory.
 KNOWN_MODELS: dict[str, tuple[str, str, str]] = {
-    # ACE-Step is the music model with the widest ComfyUI node support, and it
-    # is the one that runs fully offline. The repo is a directory tree of four
-    # component folders (the DCAE, the vocoder, the transformer and the text
-    # encoder), not a single checkpoint: the node pack loads each folder
-    # separately, so downloading one .safetensors file would leave it broken.
-    "ace-step": ("ACE-Step/ACE-Step-v1-3.5B", "", "TTS/ACE-Step-v1-3.5B"),
+    # ACE-Step 1.5, the music model with the widest ComfyUI node support, and
+    # the one that runs fully offline. It runs on ComfyUI **core**, so unlike
+    # v1 it needs no node pack. Comfy-Org package the DiT, text encoder and VAE
+    # as one all-in-one checkpoint, which is the simplest thing to keep on disk:
+    # a single file, nothing to wire up, and no half-downloaded component tree.
+    # The filename keeps its ``checkpoints/`` prefix from the repo, and the
+    # subdirectory is left empty, so the file lands where ComfyUI looks for it
+    # (``models/checkpoints/``) without the two parts being repeated.
+    "ace-step": (
+        "Comfy-Org/ACE-Step-1.5",
+        "checkpoints/ace_step_1.5_turbo_aio.safetensors",
+        "",
+    ),
     "stable-audio-open": (
         "stabilityai/stable-audio-open-1.0",
         "model.safetensors",
@@ -57,29 +64,23 @@ KNOWN_MODELS: dict[str, tuple[str, str, str]] = {
     ),
 }
 
-#: Node packs by short name, as git URLs.
-#: ``ace-step`` is billwuhao's pack, which runs the model locally. The similarly
-#: named ``ace-step/ACE-Step-ComfyUI`` is NOT interchangeable: it exposes a
-#: different set of node classes (``AceStepText2MusicServer`` and friends, not
-#: ``ACEStepGen``/``ACEModelLoader``), so a graph built for one is rejected by
-#: the other.
+#: Node packs by short name, as git URLs. No music pack on purpose: ACE-Step 1.5
+#: runs on ComfyUI **core**, so the music graph needs nothing cloned. v1 needed
+#: ``billwuhao/ComfyUI_ACE-Step``, and the official ``ace-step/ACE-Step-ComfyUI``
+#: that replaced it is a cloud-first server/client design -- neither belongs in a
+#: graph submitted straight to ``/prompt``.
 KNOWN_NODES: dict[str, str] = {
     "manager": "https://github.com/ltdrdata/ComfyUI-Manager",
-    "ace-step": "https://github.com/billwuhao/ComfyUI_ACE-Step",
 }
 
 #: Component folders a directory-shaped model repo must contain, by repo id.
 #: Used by the offline "is it already downloaded?" check. Kept as a table
 #: rather than a live Hugging Face listing so a startup check never needs the
 #: network, and so a half-finished download is caught instead of assumed good.
-DIR_MODEL_COMPONENTS: dict[str, tuple[str, ...]] = {
-    "ACE-Step/ACE-Step-v1-3.5B": (
-        "music_dcae_f8c8",
-        "music_vocoder",
-        "ace_step_transformer",
-        "umt5-base",
-    ),
-}
+#: No known model needs it today -- ACE-Step 1.5 is a single all-in-one
+#: checkpoint -- but an operator can still add a directory-shaped model as
+#: ``repo/=subdir``, which is then checked only for "something is there".
+DIR_MODEL_COMPONENTS: dict[str, tuple[str, ...]] = {}
 
 
 def _cfg() -> Any:
@@ -208,7 +209,9 @@ def _parse_model_spec(spec: str) -> tuple[str, str, str]:
 
     Accepts a short name from :data:`KNOWN_MODELS`, or an explicit
     ``repo/filename=subdir`` so an operator can add anything else without a
-    code change. An empty filename means the whole repo is a directory tree.
+    code change. An empty filename means the whole repo is a directory tree; an
+    empty subdir means the filename already carries its own path, as
+    ``checkpoints/x.safetensors`` does.
     """
     if spec in KNOWN_MODELS:
         return KNOWN_MODELS[spec]
@@ -271,14 +274,16 @@ def _install_model(spec: str, root: Path) -> str:
     """Download one model into ComfyUI's models tree.
 
     A spec with a filename fetches that one file. A spec without one fetches the
-    whole repo, for models like ACE-Step that ship as a tree of component
-    folders rather than a single checkpoint.
+    whole repo, for a model that ships as a tree of component folders rather than
+    a single checkpoint.
     """
     repo, filename, subdir = _parse_model_spec(spec)
     dest = root / "models" / subdir
     dest.mkdir(parents=True, exist_ok=True)
 
     if filename:
+        # The filename may carry a repo path prefix (``checkpoints/x.safetensors``)
+        # so the file lands in the same relative place it has in the repo.
         if (dest / filename).is_file():
             return "already present"
         from huggingface_hub import hf_hub_download
