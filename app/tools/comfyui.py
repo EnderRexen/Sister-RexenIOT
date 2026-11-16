@@ -68,7 +68,7 @@ def _default_workflow(prompt: str, negative: str, width: int, height: int, steps
     Node ids are fixed strings so the caller can override individual nodes.
     This is the shape ComfyUI's default text-to-image workflow exports to.
     """
-    seed = int(time.time() * 1000) % (2**31)
+    seed = _fresh_seed()
     return {
         "4": {
             "class_type": "CheckpointLoaderSimple",
@@ -129,7 +129,7 @@ def _music_workflow(
     ``duration`` is seconds of audio. ACE-Step conditions the length up front,
     so it is a real generation parameter rather than a trim.
     """
-    seed = int(time.time() * 1000) % (2**31)
+    seed = _fresh_seed()
     params = {
         "audio_duration": float(duration),
         "infer_step": int(steps),
@@ -336,6 +336,9 @@ async def generate_media(
                 kind,
                 lyrics,
             )
+            # A workflow file pins a literal seed, so without this every request
+            # would return the same image.
+            _randomize_seed(graph)
         except ToolError:
             # Already a clear explanation of what the workflow is missing.
             raise
@@ -432,6 +435,28 @@ def _share_from_comfyui(base: str, files: list[dict[str, str]]) -> list[str]:
         except Exception as exc:  # noqa: BLE001 - generation already succeeded
             log.warning("could not share generated file %s: %s", item.get("filename"), exc)
     return shared
+
+
+def _fresh_seed() -> int:
+    """A seed for one generation."""
+    return int(time.time() * 1000) % (2**31)
+
+
+def _randomize_seed(graph: dict[str, Any]) -> None:
+    """Give every sampler in the graph a fresh seed.
+
+    A workflow file pins a literal seed, and ``_inject_prompt`` only rewrites
+    text fields, so without this every request returns the identical image.
+    The built-in graphs already randomize their seed; this brings a
+    file-supplied graph in line with them.
+    """
+    seed = _fresh_seed()
+    for node in graph.values():
+        if not isinstance(node, dict):
+            continue
+        inputs = node.get("inputs")
+        if isinstance(inputs, dict) and "seed" in inputs:
+            inputs["seed"] = seed
 
 
 def _text_nodes(graph: dict[str, Any]) -> dict[str, dict[str, Any]]:

@@ -16,11 +16,12 @@ its two text nodes through ``inputs.positive`` / ``inputs.negative``.
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.tools.comfyui import _inject_prompt  # noqa: E402
+from app.tools.comfyui import _inject_prompt, _randomize_seed  # noqa: E402
 
 PROMPT = "a red fox in snow"
 NEGATIVE = "blurry, watermark"
@@ -149,6 +150,55 @@ def case_missing_inputs_key() -> str | None:
     return None
 
 
+def case_seed_randomized_in_workflow_file() -> str | None:
+    """A workflow file's pinned seed must be replaced, or every image repeats.
+
+    ``_inject_prompt`` only rewrites text, so a graph read from a file kept its
+    literal seed and returned a byte-identical image on every request.
+    """
+    graph = {
+        POS_ID: {"class_type": "CLIPTextEncode", "inputs": {"text": ""}},
+        SAMPLER_ID: {
+            "class_type": "KSampler",
+            "inputs": {"seed": 0, "positive": [POS_ID, 0]},
+        },
+    }
+    out = _inject_prompt(graph, PROMPT, NEGATIVE)
+    _randomize_seed(out)
+    seed = out[SAMPLER_ID]["inputs"]["seed"]
+    if seed == 0:
+        return "pinned seed 0 was left in place"
+    if not isinstance(seed, int) or not 0 <= seed < 2**31:
+        return f"seed {seed!r} is not a valid 31-bit integer"
+    return None
+
+
+def case_seed_differs_between_runs() -> str | None:
+    """Two generations must not reuse the same seed."""
+    def one() -> int:
+        graph = {SAMPLER_ID: {"class_type": "KSampler", "inputs": {"seed": 0}}}
+        _randomize_seed(graph)
+        return graph[SAMPLER_ID]["inputs"]["seed"]
+
+    # Same-millisecond calls can collide by design; only a repeated *value*
+    # across a real gap would show the seed is not refreshed.
+    first = one()
+    time.sleep(0.01)
+    second = one()
+    if first == second:
+        return f"seed was not refreshed across runs ({first} == {second})"
+    return None
+
+
+def case_seed_untouched_where_absent() -> str | None:
+    """A node with no seed key must not gain one."""
+    graph = {POS_ID: {"class_type": "CLIPTextEncode", "inputs": {"text": "x"}}}
+    _randomize_seed(graph)
+    if "seed" in graph[POS_ID]["inputs"]:
+        return "a seed was injected into a node that has no seed input"
+    return None
+
+
 CASES = (
     ("both text nodes empty", case_two_nodes_empty_positive),
     ("empty positive, filled negative", case_empty_positive_filled_negative),
@@ -158,6 +208,9 @@ CASES = (
     ("single text node", case_single_text_node),
     ("no text node -> built-in graph", case_no_text_node_uses_builtin),
     ("node missing 'inputs'", case_missing_inputs_key),
+    ("workflow seed is randomized", case_seed_randomized_in_workflow_file),
+    ("seed differs between runs", case_seed_differs_between_runs),
+    ("nodes without a seed are untouched", case_seed_untouched_where_absent),
 )
 
 
