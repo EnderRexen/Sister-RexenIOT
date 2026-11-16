@@ -344,8 +344,14 @@ async def generate_media(
     # named after the requested kind is preferred, so a music or video graph can
     # be dropped in as data/workflows/audio.json without disturbing the default
     # image workflow.
+    #
+    # The configured default is an image graph, so it is only a candidate for
+    # kind='image'. Offering it to an audio request submits an image graph and
+    # returns a picture of the prompt -- the request silently produces the wrong
+    # medium, which is worse than failing.
+    candidates = (kind, cfg.tools.comfyui_workflow) if kind == "image" else (kind,)
     graph = None
-    for name in (kind, cfg.tools.comfyui_workflow):
+    for name in candidates:
         path = config.DATA_DIR / "workflows" / f"{name}.json"
         if not path.exists():
             continue
