@@ -3,6 +3,30 @@
 Sister RexenIOT: local-first home-assistant web app, Python FastAPI backend +
 vanilla JS frontend, KittenTTS for speech.
 
+## Music generation: ACE-Step 1.5 (2026-11-17, commit 214a8f2)
+
+- The built-in music graph is **ACE-Step 1.5 on ComfyUI core**. It needs **no
+  node pack** -- v1 needed `billwuhao/ComfyUI_ACE-Step`, which is gone from
+  `KNOWN_NODES` and is not what the graph uses. Do not re-add a music pack.
+- Weights: one 10 GB AIO checkpoint, `Comfy-Org/ACE-Step-1.5`
+  `checkpoints/ace_step_1.5_turbo_aio.safetensors`. A ~6.2 GB split alternative
+  exists (0.6b text encoder + 4.79 GB turbo DiT + 0.34 VAE).
+- **The prompt/lyrics split moved from two nodes to two fields.** v1 had
+  `MultiLinePromptACES` + `MultiLineLyrics`; 1.5 has one
+  `TextEncodeAceStepAudio1.5` with `tags` and `lyrics`. `_music_text_nodes()`
+  returns a `(node id, field)` pair per target. Wrong field = the style
+  description is sung as lyrics, silently.
+- Turbo is step-distilled: `cfg=1.0`, `euler`+`simple`, ~8 steps. At cfg 1.0 a
+  negative prompt has no effect, so `negative_prompt` is ignored for music.
+- `duration` must be set on both the text encoder and the empty latent; ceiling
+  is 600 s. `[inst]` is still the instrumental marker.
+- **To validate any ComfyUI graph without weights**, diff it against the live
+  `/object_info`: class exists, input name is real, link slot valid, value in
+  range/options. Catches both `missing_node_type` and unknown input names.
+- ACE-Step's own README rates 1.5 "between Suno v4.5 and v5" -- **below** the
+  v6 the user asked for. Best open commercially-usable option (MIT), but do not
+  claim v6 parity.
+
 ## Nix packaging (`flake.nix`, `nix/package.nix`, `nix/module.nix`)
 
 - Build with `nix build .#rexeniot` (tiers: `rexeniot`, `rexeniot-stt`,
